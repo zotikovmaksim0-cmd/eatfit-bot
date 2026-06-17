@@ -1,0 +1,29 @@
+[
+  {
+    "id": "meal-001",
+    "name": "Куриная грудка с рисом",
+    "description": "Запеченная куриная грудка и жасминовый рис.",
+    "price": 85000,
+    "protein": 42,
+    "fat": 5,
+    "carbs": 48,
+    "calories": 405,
+    "categories": ["meals", "fitness"],
+    "ingredientTags": ["chicken", "rice"],
+    "images": ["meal-001-1.jpg"]
+  },
+  
+  {
+    "id": "meal-002",
+    "name": "Куриная грудка с бататом",
+    "description": "Куриная грудка и батат сувид.",
+    "price": 105000,
+    "protein": 42,
+    "fat": 2,
+    "carbs": 38,
+    "calories": 305,
+    "categories": ["meals", "fitness"],
+    "ingredientTags": ["chicken", "rice"],
+    "images": ["meal-001-2.jpg"]
+  }
+]

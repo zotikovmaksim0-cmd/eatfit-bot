@@ -1,0 +1,42 @@
+{
+  "EATFIT-20260617-002947": {
+    "user_id": 619240147,
+    "status": "done"
+  },
+  "EATFIT-20260617-003512": {
+    "user_id": 619240147,
+    "status": "done",
+    "order_text": "🔔 Новый заказ\n№ EATFIT-20260617-003512\n\n👤 Fff\n\n📞 79197234167\n\n🏠 Zzz\n\n📍 Ddd\n\n🛒 Заказ:\n\nКуриная грудка с рисом × 1 = 85,000 VND\n\n💰 Итого: 85,000 VND",
+    "manager_message_id": 406
+  },
+  "EATFIT-20260617-004045": {
+    "user_id": 619240147,
+    "status": "delivery",
+    "order_text": "🔔 Новый заказ\n№ EATFIT-20260617-004045\n\n👤 Havens\n\n📞 79197234167\n\n🏠 She’s\n\n📍 Did\n\n🛒 Заказ:\n\nКуриная грудка с бататом × 1 = 105,000 VND\n\n💰 Итого: 105,000 VND",
+    "manager_message_id": 424
+  },
+  "EATFIT-20260617-004423": {
+    "user_id": 619240147,
+    "status": "delivery",
+    "order_text": "🔔 Новый заказ\n№ EATFIT-20260617-004423\n\n👤 Shut\n\n📞 79197234167\n\n🏠 Didn’t\n\n📍 Jedi\n\n🛒 Заказ:\n\nКуриная грудка с рисом × 1 = 85,000 VND\n\n💰 Итого: 85,000 VND",
+    "manager_message_id": 446
+  },
+  "EATFIT-20260617-005308": {
+    "user_id": 36253794,
+    "status": "delivery",
+    "order_text": "🔔 Новый заказ\n№ EATFIT-20260617-005308\n\n👤 Станислав Тестов Тестирович\n\n📞 84347318469\n\n🏠 99/4 Tran Van Du, Da Nang\n\n📍 https://maps.app.goo.gl/8sBxmZZ2y9vtzHYy5\n\n🛒 Заказ:\n\nКуриная грудка с бататом × 1 = 105,000 VND\n\n💰 Итого: 105,000 VND",
+    "manager_message_id": 469
+  },
+  "EATFIT-20260617-122608": {
+    "user_id": 619240147,
+    "status": "new",
+    "order_text": "🔔 Новый заказ\n№ EATFIT-20260617-122608\n\n👤 Bb\n\n📞 79197234167\n\n🏠 Bb\n\n📍 Hh\n\n🛒 Заказ:\n\nКуриная грудка с рисом × 1 = 85,000 VND\n\n💰 Итого: 85,000 VND",
+    "manager_message_id": 488
+  },
+  "EATFIT-20260617-180434": {
+    "user_id": 619240147,
+    "status": "new",
+    "order_text": "🔔 Новый заказ\n№ EATFIT-20260617-180434\n\n👤 egd\n\n📞 79197234167\n\n🏠 dfg\n\n📍 dgf\n\n🛒 Заказ:\n\nКуриная грудка с рисом × 12 = 1,020,000 VND\nКуриная грудка с бататом × 1 = 105,000 VND\n\n💰 Итого: 1,125,000 VND",
+    "manager_message_id": 518
+  }
+}
