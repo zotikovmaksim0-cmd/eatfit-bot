@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from aiohttp import web
 import threading
+import asyncio
 
 from telegram.ext import (
     Application,
@@ -665,7 +666,10 @@ async def site_order(request):
         )
 
     try:
-        data = await request.json()\n\n        print("SITE ORDER RECEIVED")\n        print(data)
+        data = await request.json()
+
+        print("SITE ORDER RECEIVED")
+        print(data)
 
         text_order = (
             f"🔔 Новый заказ с сайта\n\n"
@@ -691,7 +695,8 @@ async def site_order(request):
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         return response
     except Exception as e:
-        print("TELEGRAM ERROR:", e)\n        return web.json_response({"success": False, "error": str(e)})
+        print("TELEGRAM ERROR:", e)
+        return web.json_response({"success": False, "error": str(e)})
 
 
 
@@ -709,7 +714,8 @@ async def test(request):
 def start_web_server():
     async def runner():
         app_web = web.Application()
-        app_web.router.add_route("*", "/site-order", site_order)\n        app_web.router.add_get("/test", test)
+        app_web.router.add_route("*", "/site-order", site_order)
+        app_web.router.add_get("/test", test)
 
         runner = web.AppRunner(app_web)
         await runner.setup()
