@@ -652,10 +652,59 @@ async def main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+
+
+async def site_order(request):
+    try:
+        data = await request.json()
+
+        text_order = (
+            f"🔔 Новый заказ с сайта\n\n"
+            f"№ {data.get('order_id','')}\n\n"
+            f"👤 {data.get('name','')}\n\n"
+            f"📞 {data.get('phone','')}\n\n"
+            f"🏠 {data.get('address','')}\n\n"
+            f"🛒 Заказ:\n\n"
+            f"{data.get('items','')}\n\n"
+            f"💰 Итого: {data.get('total','')} VND"
+        )
+
+        await telegram_app.bot.send_message(
+            chat_id=ORDER_CHAT_ID,
+            text=text_order
+        )
+
+        return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)})
+
+
+def start_web_server():
+    async def runner():
+        app_web = web.Application()
+        app_web.router.add_post("/site-order", site_order)
+
+        runner = web.AppRunner(app_web)
+        await runner.setup()
+
+        site = web.TCPSite(runner, "0.0.0.0", 10000)
+        await site.start()
+
+        while True:
+            await asyncio.sleep(3600)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(runner())
+
+
 def main():
     load_orders()
 
+    global telegram_app
+
     app = Application.builder().token(TOKEN).build()
+    telegram_app = app
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cart", cart_command))
@@ -676,6 +725,8 @@ def main():
     app.add_handler(CallbackQueryHandler(confirm_order_callback, pattern="^confirm_order$"))
     app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
     app.add_handler(CallbackQueryHandler(cancel_order_callback, pattern="^cancel_order$"))
+
+    threading.Thread(target=start_web_server, daemon=True).start()
 
     app.run_polling()
 
