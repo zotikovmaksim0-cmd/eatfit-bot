@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EatFit</title>
+<style>
+body{font-family:Arial,sans-serif;margin:0;background:#f5f5f5}
+header{background:#111;color:#fff;padding:20px;text-align:center}
+.hero{padding:30px;text-align:center;background:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;padding:20px}
+.card{background:#fff;border-radius:12px;padding:15px;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+.card img{width:100%;height:220px;object-fit:cover;border-radius:10px}
+.btn{background:#111;color:#fff;border:none;padding:10px 15px;border-radius:8px;cursor:pointer}
+.cart-btn{position:fixed;right:20px;top:20px;background:#fff;padding:12px 15px;border-radius:10px;cursor:pointer;font-weight:bold;z-index:1000}
+.cart-panel{position:fixed;top:0;right:-420px;width:400px;height:100vh;background:#fff;box-shadow:-2px 0 10px rgba(0,0,0,.2);transition:.3s;padding:20px 20px 180px 20px;overflow-y:auto;overflow-x:hidden;box-sizing:border-box;z-index:1001}
+.cart-panel::-webkit-scrollbar{width:8px}
+.cart-panel::-webkit-scrollbar-thumb{background:#ccc;border-radius:10px}
+.checkout-bar{position:fixed;bottom:0;width:360px;background:#fff;border-top:1px solid #ddd;padding:15px;box-shadow:0 -2px 10px rgba(0,0,0,.1);z-index:1002}
+.checkout-btn{width:100%;background:#111;color:#fff;border:none;padding:14px;border-radius:10px;font-size:16px;font-weight:bold;cursor:pointer}
+.cart-panel.open{right:0}
+.cart-item{border-bottom:1px solid #ddd;padding:10px 0;display:flex;gap:10px}
+.cart-item img{width:70px;height:70px;object-fit:cover;border-radius:8px}
+.empty-cart{text-align:center;color:#777;padding:20px}
+.clear-btn{background:#c62828;color:#fff;border:none;padding:10px 15px;border-radius:8px;cursor:pointer;width:100%;margin-bottom:15px}
+.total{background:#f8f8f8;padding:15px;border-radius:10px;font-weight:bold;margin-top:15px}
+.qty button{margin:0 4px}
+.total{font-weight:bold;margin-top:15px}
+input,textarea{width:100%;padding:10px;margin:5px 0 10px;box-sizing:border-box}
+
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);opacity:0;visibility:hidden;transition:.3s;z-index:999}
+.overlay.show{opacity:1;visibility:visible}
+.close-cart{position:absolute;right:15px;top:15px;font-size:24px;cursor:pointer;font-weight:bold}
+.toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:#111;color:#fff;padding:12px 20px;border-radius:10px;opacity:0;transition:.3s;z-index:2000}
+.toast.show{opacity:1}
+.success-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:3000}
+.success-box{background:#fff;padding:25px;border-radius:16px;max-width:420px;text-align:center}
+.success-box h2{margin-top:0}
+.card{transition:.25s}
+.card:hover{transform:translateY(-4px)}
+
+</style>
+</head>
+<body>
+<header><h1>EatFit Delivery</h1></header>
+
+<div class="cart-btn" onclick="toggleCart()">
+🛒 <span id="count">0</span>
+</div>
+
+<div class="hero"><h2>Правильное питание с доставкой</h2></div>
+
+<div id="overlay" class="overlay" onclick="closeCart()"></div>
+<div id="toast" class="toast">✓ Блюдо добавлено в корзину</div>
+
+<div id="successModal" class="success-modal">
+<div class="success-box">
+<h2>Спасибо за заказ!</h2>
+<p>Ваш заказ успешно принят.</p>
+<p><b id="successOrderId"></b></p>
+<button class="btn" onclick="closeSuccess()">Закрыть</button>
+</div>
+</div>
+
+<div id="products" class="grid"></div>
+
+<div id="cartPanel" class="cart-panel">
+<h2>Корзина</h2><div class="close-cart" onclick="closeCart()">✕</div>
+<button class="clear-btn" onclick="clearCart()">Очистить корзину</button>
+<div id="cartItems"></div>
+
+<div class="total">
+Товаров: <span id="totalQty">0</span><br>
+Белки: <span id="totalProtein">0</span> г<br>
+Жиры: <span id="totalFat">0</span> г<br>
+Углеводы: <span id="totalCarbs">0</span> г<br>
+Калории: <span id="totalCalories">0</span> ккал<br>
+Сумма: <span id="totalPrice">0</span> VND
+</div>
+
+<h3>Оформление заказа</h3>
+<input id="name" placeholder="Имя">
+<input id="phone" placeholder="Телефон">
+<input id="telegram" placeholder="Telegram (@username)">
+<input id="address" placeholder="Адрес доставки">
+<textarea id="comment" placeholder="Комментарий"></textarea>
+<div id="orderPreview" style="display:none;background:#eef;padding:10px;border-radius:8px;margin-bottom:10px"></div>
+<div class="checkout-bar">
+<button class="checkout-btn" onclick="checkout()">
+Оформить заказ
+</button>
+</div>
+</div>
+
+<script>
+let cart=JSON.parse(localStorage.getItem('cart')||'[]');
+let products=[];
+
+function generateOrderId(){
+ const now = new Date();
+
+ const y = now.getFullYear();
+ const m = String(now.getMonth()+1).padStart(2,'0');
+ const d = String(now.getDate()).padStart(2,'0');
+
+ let counter = parseInt(localStorage.getItem('orderCounter') || '4423');
+ counter++;
+ localStorage.setItem('orderCounter', counter);
+
+ return `EATFIT-W-${y}${m}${d}-${String(counter).padStart(6,'0')}`;
+}
+
+function closeSuccess(){
+ document.getElementById('successModal').style.display='none';
+}
+
+
+function saveCart(){
+ localStorage.setItem('cart',JSON.stringify(cart));
+ renderCart();
+}
+
+function updateCounter(){
+ document.getElementById('count').textContent =
+ cart.reduce((a,b)=>a+b.qty,0);
+}
+
+function add(id){
+ const item=cart.find(x=>x.id===id);
+ if(item)item.qty++;
+ else cart.push({id,qty:1});
+ saveCart();
+
+ const toast=document.getElementById('toast');
+ toast.classList.add('show');
+ setTimeout(()=>toast.classList.remove('show'),2000);
+}
+
+function changeQty(id,delta){
+ const item=cart.find(x=>x.id===id);
+ if(!item)return;
+ item.qty+=delta;
+ if(item.qty<=0){
+   cart=cart.filter(x=>x.id!==id);
+ }
+ saveCart();
+}
+
+function clearCart(){
+ cart=[];
+ saveCart();
+}
+
+function removeItem(id){
+ cart=cart.filter(x=>x.id!==id);
+ saveCart();
+}
+
+function renderCart(){
+ updateCounter();
+
+ const box=document.getElementById('cartItems');
+ box.innerHTML='';
+
+ let totalPrice=0;
+ let totalCalories=0;
+ let totalProtein=0;
+ let totalFat=0;
+ let totalCarbs=0;
+ let totalQty=0;
+
+ if(cart.length===0){
+   box.innerHTML='<div class="empty-cart">Корзина пуста<br>Добавьте блюда из каталога</div>';
+ }
+
+ cart.forEach(c=>{
+   const p=products.find(x=>x.id===c.id);
+   if(!p)return;
+
+   totalPrice+=p.price*c.qty;
+   totalCalories+=p.calories*c.qty;
+   totalProtein+=p.protein*c.qty;
+   totalFat+=p.fat*c.qty;
+   totalCarbs+=p.carbs*c.qty;
+   totalQty+=c.qty;
+
+   box.innerHTML+=`
+   <div class="cart-item">
+      <img src="assets/${p.images[0]}" alt="">
+      <div>
+      <b>${p.name}</b><br>
+      Б:${p.protein} Ж:${p.fat} У:${p.carbs}<br>
+      ${p.calories} ккал<br>
+      ${p.price.toLocaleString()} VND
+      <div class="qty">
+        <button onclick="changeQty('${c.id}',-1)">-</button>
+        ${c.qty}
+        <button onclick="changeQty('${c.id}',1)">+</button>
+        <button onclick="removeItem('${c.id}')">Удалить</button>
+      </div>
+      </div>
+   </div>`;
+ });
+
+ document.getElementById('totalPrice').textContent=totalPrice.toLocaleString();
+ document.getElementById('totalCalories').textContent=totalCalories;
+ document.getElementById('totalProtein').textContent=totalProtein;
+ document.getElementById('totalFat').textContent=totalFat;
+ document.getElementById('totalCarbs').textContent=totalCarbs;
+ document.getElementById('totalQty').textContent=totalQty;
+}
+
+function toggleCart(){
+ document.getElementById('cartPanel').classList.toggle('open');
+ document.getElementById('overlay').classList.toggle('show');
+}
+
+function closeCart(){
+ document.getElementById('cartPanel').classList.remove('open');
+ document.getElementById('overlay').classList.remove('show');
+}
+
+
+async function checkout(){
+ const name=document.getElementById('name').value;
+ const phone=document.getElementById('phone').value;
+ const telegram=document.getElementById('telegram').value;
+ const address=document.getElementById('address').value;
+ const comment=document.getElementById('comment').value;
+
+ if(cart.length===0){ alert('Корзина пустая'); return; }
+ if(!name || !phone || !address){
+   alert('Заполните имя, телефон и адрес доставки');
+   return;
+ }
+
+ let items='';
+ let totalPrice=0;
+
+ cart.forEach(c=>{
+   const p=products.find(x=>x.id===c.id);
+   if(!p)return;
+   items += `${p.name} × ${c.qty}
+`;
+   totalPrice += p.price*c.qty;
+ });
+
+ const orderId = generateOrderId();
+
+ try{
+   const response = await fetch('https://eatfit-bot.onrender.com/site-order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        order_id:orderId,
+        name:name,
+        phone:phone,
+        address:address,
+        telegram:telegram,
+        comment:comment,
+        items:items,
+        total:totalPrice
+      })
+   });
+
+   const result = await response.json();
+
+   if(!result.success){
+      alert('Ошибка отправки заказа');
+      return;
+   }
+
+   document.getElementById('successOrderId').innerText = orderId;
+   document.getElementById('successModal').style.display='flex';
+
+   cart=[];
+   saveCart();
+
+   document.getElementById('name').value='';
+   document.getElementById('phone').value='';
+   document.getElementById('telegram').value='';
+   document.getElementById('address').value='';
+   document.getElementById('comment').value='';
+
+   closeCart();
+
+ }catch(e){
+   alert('Не удалось связаться с сервером');
+ }
+}
+
+
+fetch('data/products.json')
+.then(r=>r.json())
+.then(data=>{
+ products=data;
+
+ const box=document.getElementById('products');
+
+ data.forEach(p=>{
+  box.innerHTML+=`
+   <div class="card">
+      <img src="assets/${p.images[0]}">
+      <h3>${p.name}</h3>
+      <p>${p.description}</p>
+      <p><b>${p.price.toLocaleString()} VND</b></p>
+      <p>${p.calories} ккал | Б:${p.protein} Ж:${p.fat} У:${p.carbs}</p>
+      <button class="btn" onclick="add('${p.id}')">В корзину</button>
+   </div>`;
+ });
+
+ renderCart();
+});
+</script>
+</body>
+</html>
