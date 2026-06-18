@@ -2,6 +2,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Keyboar
 from datetime import datetime
 import json
 from pathlib import Path
+from aiohttp import web
+import threading
 
 from telegram.ext import (
     Application,
@@ -42,6 +44,8 @@ order_data = {}
 orders = {}
 
 ORDER_CHAT_ID = 619240147
+
+telegram_app = None
 
 ORDERS_FILE = Path("orders.json")
 
