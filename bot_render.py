@@ -38,7 +38,7 @@ def get_main_keyboard():
     )
 
 
-TOKEN = "8447362025:AAGk2pNyIHeogcQjWvFqVsP86DLa8ovMHSM"
+TOKEN = "8447362025:AAFJQGBdXpP2A4cKEZYcDz-fBHy8c9LEEVE"
 
 carts = {}
 
