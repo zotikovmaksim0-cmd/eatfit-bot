@@ -446,15 +446,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = update.message.text
 
         if data["step"] == "gender":
-            try:
-                await update.message.delete()
-            except:
-                pass
             data["gender"] = txt.lower()
             data["step"] = "age"
-            await kbju_edit_message(
-                context,
-                user_id,
+
+            await update.message.reply_text(
                 "📊 Расчет КБЖУ\n\nШаг 2 из 6\n\nВведите возраст:"
             )
             return
