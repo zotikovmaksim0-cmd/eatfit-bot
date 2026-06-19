@@ -413,6 +413,22 @@ async def cart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+
+async def kbju_edit_message(context, user_id, text_value, reply_markup=None):
+    data = kbju_data.get(user_id)
+    if not data:
+        return
+    try:
+        await context.bot.edit_message_text(
+            chat_id=data["chat_id"],
+            message_id=data["message_id"],
+            text=text_value,
+            reply_markup=reply_markup
+        )
+    except Exception:
+        pass
+
+
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -421,16 +437,31 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = update.message.text
 
         if data["step"] == "gender":
+            try:
+                await update.message.delete()
+            except:
+                pass
             data["gender"] = txt.lower()
             data["step"] = "age"
-            age_kb = ReplyKeyboardMarkup([[KeyboardButton("Отмена")]], resize_keyboard=True)
-            await update.message.reply_text("Введите возраст:", reply_markup=age_kb)
+            await kbju_edit_message(
+                context,
+                user_id,
+                "📊 Расчет КБЖУ\n\nШаг 2 из 6\n\nВведите возраст:"
+            )
             return
 
         elif data["step"] == "age":
+            try:
+                await update.message.delete()
+            except:
+                pass
             data["age"] = int(txt.strip())
             data["step"] = "height"
-            await update.message.reply_text("Рост (см)?")
+            await kbju_edit_message(
+                context,
+                user_id,
+                "📊 Расчет КБЖУ\n\nШаг 3 из 6\n\nВведите рост (см):"
+            )
             return
 
         elif data["step"] == "height":
