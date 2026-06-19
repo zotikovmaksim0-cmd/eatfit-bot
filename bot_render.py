@@ -772,9 +772,18 @@ async def main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await orders_command(update, context)
 
     elif txt == "📊 Рассчитать КБЖУ":
-        kbju_data[update.effective_user.id] = {"step":"gender"}
         gender_kb = ReplyKeyboardMarkup([["👨 Мужчина","👩 Женщина"]], resize_keyboard=True)
-        await update.message.reply_text("Выберите пол:", reply_markup=gender_kb)
+
+        msg = await update.message.reply_text(
+            "📊 Расчет КБЖУ\n\nШаг 1 из 6\n\nВыберите пол:",
+            reply_markup=gender_kb
+        )
+
+        kbju_data[update.effective_user.id] = {
+            "step": "gender",
+            "message_id": msg.message_id,
+            "chat_id": msg.chat_id
+        }
 
     elif txt == "💬 Связаться с менеджером":
         keyboard = InlineKeyboardMarkup([
