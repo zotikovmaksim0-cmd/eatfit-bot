@@ -29,6 +29,7 @@ def get_main_keyboard():
         [
             ["🍽 Меню", "🛍 Корзина"],
             ["📦 Мои заказы"],
+            ["📊 Рассчитать КБЖУ"],
             ["💬 Связаться с менеджером"]
         ],
         resize_keyboard=True,
@@ -41,6 +42,8 @@ TOKEN = "8447362025:AAGk2pNyIHeogcQjWvFqVsP86DLa8ovMHSM"
 carts = {}
 
 order_data = {}
+
+kbju_data = {}
 
 orders = {}
 
@@ -408,8 +411,73 @@ async def cart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=keyboard)
 
 
+
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
+    if user_id in kbju_data:
+        data = kbju_data[user_id]
+        txt = update.message.text
+
+        if data["step"] == "gender":
+            data["gender"] = txt.lower()
+            data["step"] = "age"
+            await update.message.reply_text("Возраст?")
+            return
+
+        elif data["step"] == "age":
+            data["age"] = int(txt)
+            data["step"] = "height"
+            await update.message.reply_text("Рост (см)?")
+            return
+
+        elif data["step"] == "height":
+            data["height"] = int(txt)
+            data["step"] = "weight"
+            await update.message.reply_text("Вес (кг)?")
+            return
+
+        elif data["step"] == "weight":
+            data["weight"] = float(txt)
+            data["step"] = "goal"
+            await update.message.reply_text("Цель: похудение / поддержание / набор")
+            return
+
+        elif data["step"] == "goal":
+            data["goal"] = txt.lower()
+            data["step"] = "activity"
+            await update.message.reply_text(
+                "Активность:\nНизкая - до 7000 шагов\nСредняя - 7000-12000 шагов или 2-4 тренировки\nВысокая - 12000+ шагов или 5+ тренировок\n\nВведите: низкая / средняя / высокая"
+            )
+            return
+
+        elif data["step"] == "activity":
+            act = txt.lower()
+            factor = 1.2
+            if "сред" in act:
+                factor = 1.55
+            elif "выс" in act:
+                factor = 1.75
+
+            bmr = 10*data["weight"] + 6.25*data["height"] - 5*data["age"]
+            bmr += 5 if "муж" in data["gender"] else -161
+
+            calories = bmr * factor
+
+            if "пох" in data["goal"]:
+                calories *= 0.8
+            elif "набор" in data["goal"]:
+                calories *= 1.15
+
+            protein = round(data["weight"]*2)
+            fat = round(data["weight"]*0.8)
+            carbs = round((calories - protein*4 - fat*9)/4)
+
+            await update.message.reply_text(
+                f"📊 Ваша норма:\n\n🔥 Калории: {round(calories)} ккал\n🥩 Белки: {protein} г\n🥑 Жиры: {fat} г\n🍚 Углеводы: {carbs} г"
+            )
+            del kbju_data[user_id]
+            return
 
     if user_id not in order_data:
         return
@@ -643,6 +711,10 @@ async def main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif txt == "📦 Мои заказы":
         await orders_command(update, context)
 
+    elif txt == "📊 Рассчитать КБЖУ":
+        kbju_data[update.effective_user.id] = {"step":"gender"}
+        await update.message.reply_text("Укажите пол: Мужчина или Женщина")
+
     elif txt == "💬 Связаться с менеджером":
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("💬 Открыть чат с менеджером", url="https://t.me/max_zoti_kov")]
@@ -744,7 +816,7 @@ def main():
     app.add_handler(CommandHandler("orders", orders_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(MessageHandler(filters.CONTACT, contact_handler))
-    app.add_handler(MessageHandler(filters.Regex(r"^(🍽 Меню|🛍 Корзина|📦 Мои заказы|💬 Связаться с менеджером)$"), main_menu_buttons))
+    app.add_handler(MessageHandler(filters.Regex(r"^(🍽 Меню|🛍 Корзина|📦 Мои заказы|📊 Рассчитать КБЖУ|💬 Связаться с менеджером)$"), main_menu_buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu$"))
