@@ -426,19 +426,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif data["step"] == "age":
-            data["age"] = int(txt)
+            data["age"] = int(txt.strip())
             data["step"] = "height"
             await update.message.reply_text("Рост (см)?")
             return
 
         elif data["step"] == "height":
-            data["height"] = int(txt)
+            data["height"] = int(txt.strip())
             data["step"] = "weight"
             await update.message.reply_text("Вес (кг)?")
             return
 
         elif data["step"] == "weight":
-            data["weight"] = float(txt)
+            data["weight"] = float(txt.replace(",", ".").strip())
             data["step"] = "goal"
             await update.message.reply_text("Цель: похудение / поддержание / набор")
             return
@@ -713,7 +713,8 @@ async def main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif txt == "📊 Рассчитать КБЖУ":
         kbju_data[update.effective_user.id] = {"step":"gender"}
-        await update.message.reply_text("Укажите пол: Мужчина или Женщина")
+        gender_kb = ReplyKeyboardMarkup([["👨 Мужчина","👩 Женщина"]], resize_keyboard=True)
+        await update.message.reply_text("Выберите пол:", reply_markup=gender_kb)
 
     elif txt == "💬 Связаться с менеджером":
         keyboard = InlineKeyboardMarkup([
