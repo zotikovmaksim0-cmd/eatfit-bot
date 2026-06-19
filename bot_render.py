@@ -422,7 +422,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data["step"] == "gender":
             data["gender"] = txt.lower()
             data["step"] = "age"
-            await update.message.reply_text("Возраст?")
+            age_kb = ReplyKeyboardMarkup([[KeyboardButton("Отмена")]], resize_keyboard=True)
+            await update.message.reply_text("Введите возраст:", reply_markup=age_kb)
             return
 
         elif data["step"] == "age":
@@ -440,14 +441,20 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data["step"] == "weight":
             data["weight"] = float(txt.replace(",", ".").strip())
             data["step"] = "goal"
-            await update.message.reply_text("Цель: похудение / поддержание / набор")
+            goal_kb = ReplyKeyboardMarkup([["🔥 Похудение"],["⚖️ Поддержание"],["💪 Набор массы"]], resize_keyboard=True)
+            await update.message.reply_text("Выберите цель:", reply_markup=goal_kb)
             return
 
         elif data["step"] == "goal":
             data["goal"] = txt.lower()
             data["step"] = "activity"
+            activity_kb = ReplyKeyboardMarkup(
+                [["🚶 Низкая"],["🏃 Средняя"],["🔥 Высокая"]],
+                resize_keyboard=True
+            )
             await update.message.reply_text(
-                "Активность:\nНизкая - до 7000 шагов\nСредняя - 7000-12000 шагов или 2-4 тренировки\nВысокая - 12000+ шагов или 5+ тренировок\n\nВведите: низкая / средняя / высокая"
+                "Выберите активность:\n\n🚶 Низкая - до 7000 шагов\n🏃 Средняя - 7000-12000 шагов или 2-4 тренировки\n🔥 Высокая - 12000+ шагов или 5+ тренировок",
+                reply_markup=activity_kb
             )
             return
 
