@@ -261,8 +261,8 @@ async def add_to_cart_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 media=media,
                 reply_markup=build_keyboard(index, len(products), cart_count)
             )
-    except Exception:
-        pass
+    except Exception as e:
+        print("KBJU EDIT ERROR:", e)
 
     return
 
