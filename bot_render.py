@@ -425,8 +425,8 @@ async def kbju_edit_message(context, user_id, text_value, reply_markup=None):
             text=text_value,
             reply_markup=reply_markup
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print("KBJU EDIT ERROR:", e)
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
