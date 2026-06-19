@@ -451,12 +451,18 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif data["step"] == "age":
+
+            if not txt.strip().isdigit():
+                return
+
             try:
                 await update.message.delete()
             except:
                 pass
+
             data["age"] = int(txt.strip())
             data["step"] = "height"
+
             await kbju_edit_message(
                 context,
                 user_id,
