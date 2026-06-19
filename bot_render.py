@@ -427,6 +427,15 @@ async def kbju_edit_message(context, user_id, text_value, reply_markup=None):
         )
     except Exception as e:
         print("KBJU EDIT ERROR:", e)
+        try:
+            msg = await context.bot.send_message(
+                chat_id=data["chat_id"],
+                text=text_value,
+                reply_markup=reply_markup
+            )
+            data["message_id"] = msg.message_id
+        except Exception as e2:
+            print("KBJU SEND ERROR:", e2)
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
