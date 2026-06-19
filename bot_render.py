@@ -512,9 +512,30 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             fat = round(data["weight"]*0.8)
             carbs = round((calories - protein*4 - fat*9)/4)
 
-            await update.message.reply_text(
-                f"📊 Ваша норма:\n\n🔥 Калории: {round(calories)} ккал\n🥩 Белки: {protein} г\n🥑 Жиры: {fat} г\n🍚 Углеводы: {carbs} г"
+            try:
+                await update.message.delete()
+            except:
+                pass
+
+            try:
+                await context.bot.delete_message(
+                    chat_id=data["chat_id"],
+                    message_id=data["message_id"]
+                )
+            except:
+                pass
+
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=(
+                    f"📊 Ваша норма:\n\n"
+                    f"🔥 Калории: {round(calories)} ккал\n"
+                    f"🥩 Белки: {protein} г\n"
+                    f"🥑 Жиры: {fat} г\n"
+                    f"🍚 Углеводы: {carbs} г"
+                )
             )
+
             del kbju_data[user_id]
             return
 
