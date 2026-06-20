@@ -453,9 +453,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data["gender"] = txt.lower()
             data["step"] = "age"
 
-            await update.message.reply_text(
+            msg = await update.message.reply_text(
                 "📊 Расчет КБЖУ\n\nШаг 2 из 6\n\nВведите возраст:"
             )
+            data["cleanup_messages"].append(msg.message_id)
             return
 
         elif data["step"] == "age":
@@ -481,14 +482,16 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data["step"] == "height":
             data["height"] = int(txt.strip())
             data["step"] = "weight"
-            await update.message.reply_text("Вес (кг)?")
+            msg = await update.message.reply_text("Вес (кг)?")
+            data["cleanup_messages"].append(msg.message_id)
             return
 
         elif data["step"] == "weight":
             data["weight"] = float(txt.replace(",", ".").strip())
             data["step"] = "goal"
             goal_kb = ReplyKeyboardMarkup([["🔥 Похудение"],["⚖️ Поддержание"],["💪 Набор массы"]], resize_keyboard=True)
-            await update.message.reply_text("Выберите цель:", reply_markup=goal_kb)
+            msg = await update.message.reply_text("Выберите цель:", reply_markup=goal_kb)
+            data["cleanup_messages"].append(msg.message_id)
             return
 
         elif data["step"] == "goal":
@@ -498,10 +501,11 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [["🚶 Низкая"],["🏃 Средняя"],["🔥 Высокая"]],
                 resize_keyboard=True
             )
-            await update.message.reply_text(
+            msg = await update.message.reply_text(
                 "Выберите активность:\n\n🚶 Низкая - до 7000 шагов\n🏃 Средняя - 7000-12000 шагов или 2-4 тренировки\n🔥 Высокая - 12000+ шагов или 5+ тренировок",
                 reply_markup=activity_kb
             )
+            data["cleanup_messages"].append(msg.message_id)
             return
 
         elif data["step"] == "activity":
