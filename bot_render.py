@@ -445,6 +445,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = kbju_data[user_id]
         txt = update.message.text
 
+        if "cleanup_messages" not in data:
+            data["cleanup_messages"] = []
+        data["cleanup_messages"].append(update.message.message_id)
+
         if data["step"] == "gender":
             data["gender"] = txt.lower()
             data["step"] = "age"
@@ -526,6 +530,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.delete()
             except:
                 pass
+
+            for mid in data.get("cleanup_messages", []):
+                try:
+                    await context.bot.delete_message(
+                        chat_id=data["chat_id"],
+                        message_id=mid
+                    )
+                except:
+                    pass
 
             try:
                 await context.bot.delete_message(
@@ -798,7 +811,8 @@ async def main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kbju_data[update.effective_user.id] = {
             "step": "gender",
             "message_id": msg.message_id,
-            "chat_id": msg.chat_id
+            "chat_id": msg.chat_id,
+            "cleanup_messages": [msg.message_id]
         }
 
     elif txt == "💬 Связаться с менеджером":
