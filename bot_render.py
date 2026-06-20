@@ -546,6 +546,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             )
 
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="✅ Расчёт завершён.\n\nВыберите действие:",
+                reply_markup=get_main_keyboard()
+            )
+
             del kbju_data[user_id]
             return
 
