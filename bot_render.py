@@ -2,6 +2,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, KeyboardButton, ReplyKeyboardMarkup
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 from aiohttp import web
 import threading
@@ -52,11 +53,142 @@ ORDER_CHAT_ID = 619240147
 
 telegram_app = None
 
-ORDERS_FILE = Path("orders.json")
+DATA_DIR = Path(os.getenv("EATFIT_DATA_DIR", "."))
+ORDERS_FILE = DATA_DIR / "orders.json"
+USERS_FILE = DATA_DIR / "users.json"
+WELCOME_BONUS = 30000
+BONUS_RATE = 0.05
+XP_PER_1000_VND = 1
+FIRST_ORDER_XP = 300
+FAST_FIRST_ORDER_XP = 500
+COINS_PER_100000_VND = 100
+STREAK_REWARDS = {
+    7: {"xp": 500, "coins": 0},
+    14: {"xp": 1000, "coins": 0},
+    30: {"xp": 2000, "coins": 1000},
+}
+LEVELS = [
+    {"name": "Legend", "xp": 70000},
+    {"name": "Elite", "xp": 35000},
+    {"name": "Champion", "xp": 15000},
+    {"name": "Athlete", "xp": 5000},
+    {"name": "Rookie", "xp": 0},
+]
+
+users = {}
+
+
+def write_json_file(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
+
+
+def cors_response(data=None, status=200):
+    response = web.json_response(data or {}, status=status)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
+
+def cors_options():
+    return web.Response(
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        }
+    )
+
+
+def normalize_phone(phone):
+    return "".join(ch for ch in str(phone or "") if ch.isdigit() or ch == "+")
+
+
+def now_iso():
+    return datetime.utcnow().isoformat()
+
+
+def save_users():
+    write_json_file(USERS_FILE, users)
+
+
+def load_users():
+    global users
+
+    if USERS_FILE.exists():
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = json.load(f)
+
+
+def public_user(user):
+    xp = int(user.get("xp", 0))
+    level = club_level(xp)
+    return {
+        "name": user.get("name", ""),
+        "surname": user.get("surname", ""),
+        "phone": user.get("phone", ""),
+        "contact_method": user.get("contact_method", ""),
+        "contact_value": user.get("contact_value", ""),
+        "bonus_balance": int(user.get("bonus_balance", 0)),
+        "xp": xp,
+        "level": level["name"],
+        "level_min_xp": level["xp"],
+        "next_level": next_level(xp),
+        "coins": int(user.get("coins", 0)),
+        "streak_days": int(user.get("streak_days", 0)),
+        "orders_count": int(user.get("orders_count", 0)),
+        "total_spent": int(user.get("total_spent", 0)),
+        "welcome_bonus": WELCOME_BONUS,
+        "bonus_rate": BONUS_RATE,
+    }
+
+
+def club_level(xp):
+    for level in LEVELS:
+        if xp >= level["xp"]:
+            return level
+    return LEVELS[-1]
+
+
+def next_level(xp):
+    ordered = list(reversed(LEVELS))
+    for level in ordered:
+        if xp < level["xp"]:
+            return level
+    return None
+
+
+def today_key():
+    return datetime.utcnow().date().isoformat()
+
+
+def update_order_streak(user):
+    today = today_key()
+    last_day = user.get("last_order_date", "")
+
+    if last_day == today:
+        return int(user.get("streak_days", 0)), False
+
+    try:
+        last_date = datetime.fromisoformat(last_day).date()
+        delta = (datetime.utcnow().date() - last_date).days
+    except Exception:
+        delta = None
+
+    if delta == 1:
+        user["streak_days"] = int(user.get("streak_days", 0)) + 1
+    else:
+        user["streak_days"] = 1
+
+    user["last_order_date"] = today
+    return int(user["streak_days"]), True
 
 def save_orders():
-    with open(ORDERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(orders, f, ensure_ascii=False, indent=2)
+    write_json_file(ORDERS_FILE, orders)
 
 def load_orders():
     global orders
@@ -833,29 +965,122 @@ async def main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def site_order(request):
     if request.method == "OPTIONS":
-        return web.Response(
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Methods": "POST, OPTIONS",
-            }
-        )
+        return cors_options()
 
     try:
         data = await request.json()
+        contact_labels = {
+            "zalo": "Zalo",
+            "whatsapp": "WhatsApp",
+            "telegram": "Telegram",
+        }
+        contact_method = data.get("contact_method", "")
+        contact_value = data.get("contact_value", "") or data.get("telegram", "")
+        contact_label = contact_labels.get(contact_method, contact_method)
+        contact_line = (
+            f"\n💬 Удобная связь: {contact_label} — {contact_value}\n"
+            if contact_label or contact_value
+            else ""
+        )
+        map_value = data.get("delivery_map", "") or data.get("maps", "")
+        map_line = f"\n📍 Точка на карте: {map_value}\n" if map_value else ""
 
         print("SITE ORDER RECEIVED")
         print(data)
+        customer_name = " ".join(
+            part for part in [data.get("name", ""), data.get("surname", "")]
+            if part
+        )
+
+        loyalty_phone = normalize_phone(data.get("loyalty_phone") or data.get("phone"))
+        loyalty_user = users.get(loyalty_phone)
+        if loyalty_phone and not loyalty_user:
+            users[loyalty_phone] = {
+                "name": data.get("name", ""),
+                "surname": data.get("surname", ""),
+                "phone": loyalty_phone,
+                "contact_method": contact_method,
+                "contact_value": contact_value,
+                "bonus_balance": 0,
+                "xp": 0,
+                "coins": 0,
+                "streak_days": 0,
+                "orders_count": 0,
+                "total_spent": 0,
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+                "auto_registered": True,
+            }
+            loyalty_user = users[loyalty_phone]
+        use_bonus = bool(data.get("use_bonus"))
+        total_value = int(float(data.get("total") or 0))
+        bonus_applied = 0
+        bonus_earned = 0
+        xp_earned = 0
+        coins_earned = 0
+        streak_days = 0
+        level_before = ""
+        level_after = ""
+        final_total = total_value
+        loyalty_line = ""
+
+        if loyalty_user:
+            orders_before = int(loyalty_user.get("orders_count", 0))
+            level_before = club_level(int(loyalty_user.get("xp", 0)))["name"]
+            available_bonus = int(loyalty_user.get("bonus_balance", 0))
+            if use_bonus:
+                bonus_applied = min(available_bonus, total_value)
+                final_total = max(0, total_value - bonus_applied)
+            bonus_earned = int(final_total * BONUS_RATE)
+            xp_earned = int(final_total / 1000) * XP_PER_1000_VND
+            if orders_before == 0:
+                xp_earned += FIRST_ORDER_XP
+                try:
+                    created_at = datetime.fromisoformat(loyalty_user.get("created_at", now_iso()))
+                    if (datetime.utcnow() - created_at).total_seconds() <= 86400:
+                        xp_earned += FAST_FIRST_ORDER_XP
+                except Exception:
+                    pass
+            coins_earned = int(final_total / 100000) * COINS_PER_100000_VND
+            streak_days, streak_changed = update_order_streak(loyalty_user)
+            if streak_changed and streak_days in STREAK_REWARDS:
+                xp_earned += STREAK_REWARDS[streak_days]["xp"]
+                coins_earned += STREAK_REWARDS[streak_days]["coins"]
+            loyalty_user["bonus_balance"] = available_bonus - bonus_applied + bonus_earned
+            loyalty_user["xp"] = int(loyalty_user.get("xp", 0)) + xp_earned
+            loyalty_user["coins"] = int(loyalty_user.get("coins", 0)) + coins_earned
+            loyalty_user["orders_count"] = int(loyalty_user.get("orders_count", 0)) + 1
+            loyalty_user["total_spent"] = int(loyalty_user.get("total_spent", 0)) + final_total
+            loyalty_user["updated_at"] = now_iso()
+            level_after = club_level(int(loyalty_user.get("xp", 0)))["name"]
+            save_users()
+            loyalty_line = (
+                f"\n🏆 EatFit Club:\n"
+                f"Уровень: {level_after}"
+                f"{' ↑' if level_before and level_before != level_after else ''}\n"
+                f"XP за заказ: +{xp_earned:,}\n"
+                f"EatFit Coins: +{coins_earned:,}\n"
+                f"Серия заказов: {streak_days} дн.\n\n"
+                f"🎁 Бонусы клиента:\n"
+                f"Списано: {bonus_applied:,} VND\n"
+                f"Начислится: {bonus_earned:,} VND\n"
+                f"Баланс после заказа: {loyalty_user['bonus_balance']:,} VND\n"
+            )
 
         text_order = (
             f"🔔 Новый заказ с сайта\n\n"
             f"№ {data.get('order_id','')}\n\n"
-            f"👤 {data.get('name','')}\n\n"
+            f"👤 {customer_name}\n\n"
             f"📞 {data.get('phone','')}\n\n"
+            f"{contact_line}"
             f"🏠 {data.get('address','')}\n\n"
+            f"{map_line}"
             f"🛒 Заказ:\n\n"
             f"{data.get('items','')}\n\n"
-            f"💰 Итого: {data.get('total','')} VND"
+            f"💰 Сумма заказа: {total_value:,} VND\n"
+            f"🎁 Списано бонусов: {bonus_applied:,} VND\n"
+            f"💳 К оплате: {final_total:,} VND"
+            f"{loyalty_line}"
         )
 
         await telegram_app.bot.send_message(
@@ -865,14 +1090,87 @@ async def site_order(request):
 
         print("SITE ORDER SENT TO TELEGRAM")
 
-        response = web.json_response({"success": True})
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        return response
+        return cors_response({
+            "success": True,
+            "loyalty": {
+                "registered": bool(loyalty_user),
+                "bonus_applied": bonus_applied,
+                "bonus_earned": bonus_earned,
+                "bonus_balance": int(loyalty_user.get("bonus_balance", 0)) if loyalty_user else 0,
+                "final_total": final_total,
+                "xp_earned": xp_earned,
+                "coins_earned": coins_earned,
+                "xp": int(loyalty_user.get("xp", 0)) if loyalty_user else 0,
+                "coins": int(loyalty_user.get("coins", 0)) if loyalty_user else 0,
+                "level": level_after,
+                "streak_days": streak_days,
+            }
+        })
     except Exception as e:
         print("TELEGRAM ERROR:", e)
-        return web.json_response({"success": False, "error": str(e)})
+        return cors_response({"success": False, "error": str(e)})
+
+
+async def loyalty_register(request):
+    if request.method == "OPTIONS":
+        return cors_options()
+
+    try:
+        data = await request.json()
+        phone = normalize_phone(data.get("phone"))
+        if not phone:
+            return cors_response({"success": False, "error": "phone_required"}, status=400)
+
+        is_new = phone not in users
+        user = users.get(phone, {})
+        users[phone] = {
+            **user,
+            "name": data.get("name", user.get("name", "")),
+            "surname": data.get("surname", user.get("surname", "")),
+            "phone": phone,
+            "contact_method": data.get("contact_method", user.get("contact_method", "")),
+            "contact_value": data.get("contact_value", user.get("contact_value", "")),
+            "bonus_balance": int(user.get("bonus_balance", WELCOME_BONUS if is_new else 0)),
+            "xp": int(user.get("xp", 0)),
+            "coins": int(user.get("coins", 0)),
+            "streak_days": int(user.get("streak_days", 0)),
+            "last_order_date": user.get("last_order_date", ""),
+            "orders_count": int(user.get("orders_count", 0)),
+            "total_spent": int(user.get("total_spent", 0)),
+            "created_at": user.get("created_at", now_iso()),
+            "updated_at": now_iso(),
+        }
+        save_users()
+
+        return cors_response({
+            "success": True,
+            "is_new": is_new,
+            "user": public_user(users[phone]),
+        })
+    except Exception as e:
+        return cors_response({"success": False, "error": str(e)}, status=500)
+
+
+async def loyalty_status(request):
+    if request.method == "OPTIONS":
+        return cors_options()
+
+    phone = normalize_phone(request.query.get("phone", ""))
+    if not phone and request.method == "POST":
+        try:
+            data = await request.json()
+            phone = normalize_phone(data.get("phone"))
+        except Exception:
+            phone = ""
+
+    user = users.get(phone)
+    return cors_response({
+        "success": True,
+        "registered": bool(user),
+        "user": public_user(user) if user else None,
+        "welcome_bonus": WELCOME_BONUS,
+        "bonus_rate": BONUS_RATE,
+    })
 
 
 
@@ -891,6 +1189,8 @@ def start_web_server():
     async def runner():
         app_web = web.Application()
         app_web.router.add_route("*", "/site-order", site_order)
+        app_web.router.add_route("*", "/loyalty-register", loyalty_register)
+        app_web.router.add_route("*", "/loyalty-status", loyalty_status)
         app_web.router.add_get("/test", test)
 
         runner = web.AppRunner(app_web)
@@ -909,6 +1209,7 @@ def start_web_server():
 
 def main():
     load_orders()
+    load_users()
 
     global telegram_app
 

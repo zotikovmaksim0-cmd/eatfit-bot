@@ -3,111 +3,88 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-DATA_FILE = Path("data/products.json")
+
+PRODUCTS_FILE = Path("data/products.json")
+
+
+def format_vnd(value):
+    return f"{int(value):,} VND"
 
 
 def get_products():
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    if not PRODUCTS_FILE.exists():
+        return []
 
-
-def dishes_text(count):
-    if 11 <= count % 100 <= 14:
-        return "блюд"
-
-    last = count % 10
-
-    if last == 1:
-        return "блюдо"
-
-    if last in (2, 3, 4):
-        return "блюда"
-
-    return "блюд"
+    with open(PRODUCTS_FILE, "r", encoding="utf-8") as file:
+        return json.load(file)
 
 
 def build_caption(product):
     return (
-        f"🍽 {product['name']}\n\n"
-        f"{product['description']}\n\n"
-        f"💰 {product['price']:,} VND\n\n"
-        f"🥩 Белки: {product['protein']} г\n"
-        f"🥑 Жиры: {product['fat']} г\n"
-        f"🍚 Углеводы: {product['carbs']} г\n"
-        f"🔥 Калории: {product['calories']} ккал"
+        f"🥗 {product['name']}\n\n"
+        f"{product.get('description', '')}\n\n"
+        f"🥩 Белки: {product.get('protein', 0)} г\n"
+        f"🥑 Жиры: {product.get('fat', 0)} г\n"
+        f"🍚 Углеводы: {product.get('carbs', 0)} г\n"
+        f"🔥 Калории: {product.get('calories', 0)} ккал\n\n"
+        f"💰 {format_vnd(product.get('price', 0))}"
     )
 
 
 def build_keyboard(index, total, cart_count=0):
-    nav_buttons = []
+    prev_index = (index - 1) % total if total else 0
+    next_index = (index + 1) % total if total else 0
 
-    if index > 0:
-        nav_buttons.append(
-            InlineKeyboardButton("⬅️", callback_data=f"catalog_{index - 1}")
-        )
-
-    nav_buttons.append(
-        InlineKeyboardButton(f"{index + 1}/{total}", callback_data="ignore")
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("⬅️", callback_data=f"catalog_{prev_index}"),
+                InlineKeyboardButton("➡️", callback_data=f"catalog_{next_index}"),
+            ],
+            [InlineKeyboardButton("➕ В корзину", callback_data=f"add_{index}")],
+            [InlineKeyboardButton(f"🛍 Корзина ({cart_count})", callback_data="cart")],
+        ]
     )
-
-    if index < total - 1:
-        nav_buttons.append(
-            InlineKeyboardButton("➡️", callback_data=f"catalog_{index + 1}")
-        )
-
-    return InlineKeyboardMarkup([
-        nav_buttons,
-        [InlineKeyboardButton("🛒 Добавить в корзину", callback_data=f"add_{index}")],
-        [InlineKeyboardButton(f"🛍 {cart_count} {dishes_text(cart_count)}" if cart_count > 0 else "🛍 Корзина", callback_data="cart")],
-        [InlineKeyboardButton(
-            "💬 Связаться с менеджером",
-            url="https://t.me/max_zoti_kov"
-        )]
-    ])
-
-
-async def show_product(query, context, index):
-    products = get_products()
-    product = products[index]
-    caption = build_caption(product)
-    photo = f"assets/{product['images'][0]}"
-
-    from telegram import InputMediaPhoto
-
-    try:
-        with open(photo, "rb") as image:
-            media = InputMediaPhoto(media=image, caption=caption)
-
-            await query.edit_message_media(
-                media=media,
-                reply_markup=build_keyboard(index, len(products), 0)
-            )
-
-    except Exception:
-        with open(photo, "rb") as image:
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=image,
-                caption=caption,
-                reply_markup=build_keyboard(index, len(products), 0)
-            )
 
 
 async def show_catalog(query, context):
     products = get_products()
-
     if not products:
-        await query.message.reply_text("Каталог пуст.")
+        await query.message.reply_text("Меню пока недоступно.")
         return
 
-    product = products[0]
-    caption = build_caption(product)
-    photo = f"assets/{product['images'][0]}"
+    keyboard = [
+        [InlineKeyboardButton(product["name"], callback_data=f"catalog_{index}")]
+        for index, product in enumerate(products)
+    ]
 
-    with open(photo, "rb") as image:
-        await context.bot.send_photo(
-            chat_id=query.message.chat_id,
-            photo=image,
-            caption=caption,
-            reply_markup=build_keyboard(0, len(products), 0)
-        )
+    text = "🍽 Меню EatFit\n\nВыберите блюдо:"
+    markup = InlineKeyboardMarkup(keyboard)
+
+    try:
+        await query.edit_message_text(text, reply_markup=markup)
+    except Exception:
+        await query.message.reply_text(text, reply_markup=markup)
+
+
+async def show_product(query, context, index):
+    products = get_products()
+    if not products:
+        await query.message.reply_text("Меню пока недоступно.")
+        return
+
+    safe_index = max(0, min(index, len(products) - 1))
+    product = products[safe_index]
+    caption = build_caption(product)
+    keyboard = build_keyboard(safe_index, len(products), 0)
+    image_path = Path("assets") / product["images"][0]
+
+    try:
+        with open(image_path, "rb") as image:
+            await query.message.reply_photo(
+                photo=image,
+                caption=caption,
+                reply_markup=keyboard,
+            )
+    except Exception:
+        await query.message.reply_text(caption, reply_markup=keyboard)
