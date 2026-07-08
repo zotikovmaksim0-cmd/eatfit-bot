@@ -105,7 +105,62 @@ def cors_options():
 
 
 def normalize_phone(phone):
-    return "".join(ch for ch in str(phone or "") if ch.isdigit() or ch == "+")
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("84") and len(digits) >= 10:
+        return digits
+    if digits.startswith("0") and len(digits) >= 9:
+        return "84" + digits[1:]
+    if len(digits) == 9 and digits[0] in "35789":
+        return "84" + digits
+    return digits
+
+
+def merge_user_records(primary, duplicate):
+    merged = {**duplicate, **primary}
+    merged["bonus_balance"] = max(
+        int(primary.get("bonus_balance", 0)),
+        int(duplicate.get("bonus_balance", 0)),
+    )
+    merged["xp"] = int(primary.get("xp", 0)) + int(duplicate.get("xp", 0))
+    merged["coins"] = int(primary.get("coins", 0)) + int(duplicate.get("coins", 0))
+    merged["orders_count"] = int(primary.get("orders_count", 0)) + int(duplicate.get("orders_count", 0))
+    merged["total_spent"] = int(primary.get("total_spent", 0)) + int(duplicate.get("total_spent", 0))
+    merged["streak_days"] = max(
+        int(primary.get("streak_days", 0)),
+        int(duplicate.get("streak_days", 0)),
+    )
+    merged["welcome_bonus_granted"] = bool(
+        primary.get("welcome_bonus_granted", True)
+        or duplicate.get("welcome_bonus_granted", True)
+    )
+    return merged
+
+
+def get_user_by_phone(phone):
+    normalized = normalize_phone(phone)
+    if not normalized:
+        return "", None
+    if normalized in users:
+        users[normalized]["phone"] = normalized
+        return normalized, users[normalized]
+
+    matching_keys = [
+        key for key in list(users.keys())
+        if normalize_phone(key) == normalized
+        or normalize_phone(users[key].get("phone", "")) == normalized
+    ]
+    if not matching_keys:
+        return normalized, None
+
+    merged = users.pop(matching_keys[0])
+    for key in matching_keys[1:]:
+        merged = merge_user_records(merged, users.pop(key))
+    merged["phone"] = normalized
+    users[normalized] = merged
+    save_users()
+    return normalized, users[normalized]
 
 
 def now_iso():
@@ -992,8 +1047,7 @@ async def site_order(request):
             if part
         )
 
-        loyalty_phone = normalize_phone(data.get("loyalty_phone") or data.get("phone"))
-        loyalty_user = users.get(loyalty_phone)
+        loyalty_phone, loyalty_user = get_user_by_phone(data.get("loyalty_phone") or data.get("phone"))
         if loyalty_phone and not loyalty_user:
             users[loyalty_phone] = {
                 "name": data.get("name", ""),
@@ -1010,6 +1064,7 @@ async def site_order(request):
                 "created_at": now_iso(),
                 "updated_at": now_iso(),
                 "auto_registered": True,
+                "welcome_bonus_granted": False,
             }
             loyalty_user = users[loyalty_phone]
         use_bonus = bool(data.get("use_bonus"))
@@ -1117,12 +1172,17 @@ async def loyalty_register(request):
 
     try:
         data = await request.json()
-        phone = normalize_phone(data.get("phone"))
+        phone, user = get_user_by_phone(data.get("phone"))
         if not phone:
             return cors_response({"success": False, "error": "phone_required"}, status=400)
 
-        is_new = phone not in users
-        user = users.get(phone, {})
+        is_new = user is None
+        user = user or {}
+        welcome_bonus_granted = bool(user.get("welcome_bonus_granted", False))
+        bonus_balance = int(user.get("bonus_balance", 0))
+        if is_new and not welcome_bonus_granted:
+            bonus_balance = WELCOME_BONUS
+            welcome_bonus_granted = True
         users[phone] = {
             **user,
             "name": data.get("name", user.get("name", "")),
@@ -1130,7 +1190,7 @@ async def loyalty_register(request):
             "phone": phone,
             "contact_method": data.get("contact_method", user.get("contact_method", "")),
             "contact_value": data.get("contact_value", user.get("contact_value", "")),
-            "bonus_balance": int(user.get("bonus_balance", WELCOME_BONUS if is_new else 0)),
+            "bonus_balance": bonus_balance,
             "xp": int(user.get("xp", 0)),
             "coins": int(user.get("coins", 0)),
             "streak_days": int(user.get("streak_days", 0)),
@@ -1139,6 +1199,7 @@ async def loyalty_register(request):
             "total_spent": int(user.get("total_spent", 0)),
             "created_at": user.get("created_at", now_iso()),
             "updated_at": now_iso(),
+            "welcome_bonus_granted": welcome_bonus_granted,
         }
         save_users()
 
@@ -1163,7 +1224,7 @@ async def loyalty_status(request):
         except Exception:
             phone = ""
 
-    user = users.get(phone)
+    phone, user = get_user_by_phone(phone)
     return cors_response({
         "success": True,
         "registered": bool(user),
