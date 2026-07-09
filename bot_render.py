@@ -490,6 +490,10 @@ def build_status_keyboard(order_number, current_status=""):
 
 
 def clean_order_message_text(text):
+    if text.startswith("📌 Текущий статус:\n"):
+        parts = text.split("\n\n", 1)
+        if len(parts) == 2:
+            text = parts[1]
     for marker in ("\n\n📌 Текущий статус:", "\n\n📌 Статус:"):
         if marker in text:
             return text.split(marker)[0]
@@ -502,7 +506,7 @@ def order_text_with_status(order, status):
     payment_text = order.get("payment_text", "")
     if payment_text and payment_text not in base_text:
         base_text += payment_text
-    return f"{base_text}\n\n📌 Текущий статус:\n{status_map.get(status, status)}"
+    return f"📌 Текущий статус:\n{status_map.get(status, status)}\n\n{base_text}"
 
 
 
@@ -1166,6 +1170,8 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split("|")
     status = data[0].replace("status_", "")
     order_number = data[1]
+    status_map = order_status_map()
+    await query.answer(f"Меняю статус: {status_map.get(status, status)}")
 
     if order_number not in orders:
         orders[order_number] = {
@@ -1183,8 +1189,6 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         apply_loyalty_payment(order_number)
     save_orders()
 
-    status_map = order_status_map()
-
     if user_id:
         await context.bot.send_message(
             chat_id=user_id,
@@ -1201,17 +1205,17 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             await query.edit_message_text(text=updated_text, reply_markup=updated_keyboard)
-        except Exception:
-            await context.bot.edit_message_text(
+        except Exception as edit_error:
+            print("STATUS DIRECT EDIT ERROR:", edit_error)
+            sent_message = await context.bot.send_message(
                 chat_id=query.message.chat.id,
-                message_id=query.message.message_id,
                 text=updated_text,
                 reply_markup=updated_keyboard,
             )
+            orders[order_number]["manager_message_id"] = sent_message.message_id
+            save_orders()
     except Exception as e:
         print("STATUS UPDATE ERROR:", e)
-
-    await query.answer(f"Статус: {status_map.get(status, status)}")
 
 
 async def cancel_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
