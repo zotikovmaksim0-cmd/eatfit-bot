@@ -49,7 +49,7 @@ kbju_data = {}
 
 orders = {}
 
-ORDER_CHAT_ID = 619240147
+ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "619240147"))
 
 telegram_app = None
 
@@ -663,6 +663,14 @@ async def cart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, keyboard = get_cart_text_and_keyboard(update.effective_user.id)
 
     await update.message.reply_text(text, reply_markup=keyboard)
+
+
+async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    await update.message.reply_text(
+        f"Chat ID для заказов:\n{chat.id}\n\n"
+        "Добавьте это значение в Render как ORDER_CHAT_ID."
+    )
 
 
 
@@ -1363,6 +1371,7 @@ def main():
     app.add_handler(CommandHandler("cart", cart_command))
     app.add_handler(CommandHandler("orders", orders_command))
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("chatid", chatid_command))
     app.add_handler(MessageHandler(filters.CONTACT, contact_handler))
     app.add_handler(MessageHandler(filters.Regex(r"^(🍽 Меню|🛍 Корзина|📦 Мои заказы|📊 Рассчитать КБЖУ|💬 Связаться с менеджером)$"), main_menu_buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
