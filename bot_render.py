@@ -483,7 +483,7 @@ def build_status_keyboard(order_number, current_status=""):
         ("done", "🟢 Доставлен"),
     ]
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(label, callback_data=f"status_{status}|{order_number}")]
+        [InlineKeyboardButton(label, callback_data=f"orderstatus_{status}|{order_number}")]
         for status, label in buttons
         if status != current_status
     ])
@@ -1168,7 +1168,7 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
     data = query.data.split("|")
-    status = data[0].replace("status_", "")
+    status = data[0].replace("orderstatus_", "").replace("status_", "")
     order_number = data[1]
     status_map = order_status_map()
     await query.answer(f"Меняю статус: {status_map.get(status, status)}")
@@ -1538,7 +1538,7 @@ def main():
     app.add_handler(CallbackQueryHandler(clear_cart_callback, pattern="^clear_cart$"))
     app.add_handler(CallbackQueryHandler(checkout_callback, pattern="^checkout$"))
     app.add_handler(CallbackQueryHandler(confirm_order_callback, pattern="^confirm_order$"))
-    app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
+    app.add_handler(CallbackQueryHandler(status_callback, pattern="^(status_|orderstatus_)"))
     app.add_handler(CallbackQueryHandler(cancel_order_callback, pattern="^cancel_order$"))
 
     threading.Thread(target=start_web_server, daemon=True).start()
