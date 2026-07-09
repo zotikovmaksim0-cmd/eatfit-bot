@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 from aiohttp import web
 import threading
 import asyncio
@@ -50,6 +51,7 @@ kbju_data = {}
 orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
 
 telegram_app = None
 
@@ -483,7 +485,10 @@ def build_status_keyboard(order_number, current_status=""):
         ("done", "🟢 Доставлен"),
     ]
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(label, callback_data=f"orderstatus_{status}|{order_number}")]
+        [InlineKeyboardButton(
+            label,
+            url=f"{PUBLIC_BASE_URL}/order-status?order={quote(order_number)}&status={status}"
+        )]
         for status, label in buttons
         if status != current_status
     ])
@@ -507,6 +512,48 @@ def order_text_with_status(order, status):
     if payment_text and payment_text not in base_text:
         base_text += payment_text
     return f"📌 Текущий статус:\n{status_map.get(status, status)}\n\n{base_text}"
+
+
+async def update_order_status_message(order_number, status, bot, chat_id=None, message_id=None, fallback_text=""):
+    if order_number not in orders:
+        orders[order_number] = {
+            "user_id": None,
+            "status": "new",
+            "source": "status_link",
+            "order_text": clean_order_message_text(fallback_text or ""),
+            "manager_message_id": message_id,
+            "created_at": now_iso(),
+        }
+
+    order = orders[order_number]
+    order["status"] = status
+    if status == "paid":
+        apply_loyalty_payment(order_number)
+        order = orders[order_number]
+    save_orders()
+
+    updated_text = order_text_with_status(order, status)
+    updated_keyboard = build_status_keyboard(order_number, status)
+    target_chat_id = chat_id or ORDER_CHAT_ID
+    target_message_id = order.get("manager_message_id") or message_id
+
+    if target_message_id:
+        await bot.edit_message_text(
+            chat_id=target_chat_id,
+            message_id=target_message_id,
+            text=updated_text,
+            reply_markup=updated_keyboard,
+        )
+    else:
+        sent_message = await bot.send_message(
+            chat_id=target_chat_id,
+            text=updated_text,
+            reply_markup=updated_keyboard,
+        )
+        order["manager_message_id"] = sent_message.message_id
+        save_orders()
+
+    return updated_text
 
 
 
@@ -1200,17 +1247,21 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     try:
-        updated_text = order_text_with_status(orders[order_number], status)
-        updated_keyboard = build_status_keyboard(order_number, status)
-
         try:
-            await query.edit_message_text(text=updated_text, reply_markup=updated_keyboard)
+            await update_order_status_message(
+                order_number,
+                status,
+                context.bot,
+                chat_id=query.message.chat.id,
+                message_id=query.message.message_id,
+                fallback_text=query.message.text or "",
+            )
         except Exception as edit_error:
             print("STATUS DIRECT EDIT ERROR:", edit_error)
             sent_message = await context.bot.send_message(
                 chat_id=query.message.chat.id,
-                text=updated_text,
-                reply_markup=updated_keyboard,
+                text=order_text_with_status(orders[order_number], status),
+                reply_markup=build_status_keyboard(order_number, status),
             )
             orders[order_number]["manager_message_id"] = sent_message.message_id
             save_orders()
@@ -1477,6 +1528,50 @@ async def loyalty_status(request):
     })
 
 
+async def order_status_web(request):
+    if request.method == "OPTIONS":
+        return cors_options()
+
+    try:
+        if request.method == "POST":
+            data = await request.json()
+            order_number = data.get("order", "")
+            status = data.get("status", "")
+        else:
+            order_number = request.query.get("order", "")
+            status = request.query.get("status", "")
+
+        status_map = order_status_map()
+        if not order_number or status not in status_map:
+            return web.Response(
+                text="Invalid order status request",
+                status=400,
+                content_type="text/plain",
+            )
+
+        await update_order_status_message(order_number, status, telegram_app.bot)
+        status_label = status_map[status]
+        return web.Response(
+            text=(
+                "<!doctype html><meta charset='utf-8'>"
+                "<body style='font-family:Arial,sans-serif;padding:32px;line-height:1.4'>"
+                f"<h2>Статус обновлён</h2>"
+                f"<p>Заказ: <b>{order_number}</b></p>"
+                f"<p>Новый статус: <b>{status_label}</b></p>"
+                "<p>Можно вернуться в Telegram.</p>"
+                "</body>"
+            ),
+            content_type="text/html",
+        )
+    except Exception as e:
+        print("ORDER STATUS WEB ERROR:", e)
+        return web.Response(
+            text=f"Status update error: {e}",
+            status=500,
+            content_type="text/plain",
+        )
+
+
 
 async def test(request):
     try:
@@ -1495,6 +1590,7 @@ def start_web_server():
         app_web.router.add_route("*", "/site-order", site_order)
         app_web.router.add_route("*", "/loyalty-register", loyalty_register)
         app_web.router.add_route("*", "/loyalty-status", loyalty_status)
+        app_web.router.add_route("*", "/order-status", order_status_web)
         app_web.router.add_get("/test", test)
 
         runner = web.AppRunner(app_web)
