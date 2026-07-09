@@ -1131,8 +1131,8 @@ async def confirm_order_callback(update: Update, context: ContextTypes.DEFAULT_T
     try:
         sent_message = await context.bot.send_message(
             chat_id=ORDER_CHAT_ID,
-            text=order_text,
-            reply_markup=status_keyboard
+            text=order_text_with_status(orders[order_number], "new"),
+            reply_markup=build_status_keyboard(order_number, "new")
         )
 
         orders[order_number]["manager_message_id"] = sent_message.message_id
@@ -1197,13 +1197,17 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         updated_text = order_text_with_status(orders[order_number], status)
+        updated_keyboard = build_status_keyboard(order_number, status)
 
-        await context.bot.edit_message_text(
-            chat_id=query.message.chat_id,
-            message_id=orders[order_number].get("manager_message_id") or query.message.message_id,
-            text=updated_text,
-            reply_markup=build_status_keyboard(order_number, status)
-        )
+        try:
+            await query.edit_message_text(text=updated_text, reply_markup=updated_keyboard)
+        except Exception:
+            await context.bot.edit_message_text(
+                chat_id=query.message.chat.id,
+                message_id=query.message.message_id,
+                text=updated_text,
+                reply_markup=updated_keyboard,
+            )
     except Exception as e:
         print("STATUS UPDATE ERROR:", e)
 
@@ -1363,7 +1367,6 @@ async def site_order(request):
             f"💳 К оплате: {final_total:,} VND"
             f"{loyalty_line}"
         )
-        status_keyboard = build_status_keyboard(order_number)
         orders[order_number] = {
             "user_id": None,
             "status": "new",
@@ -1383,8 +1386,8 @@ async def site_order(request):
 
         sent_message = await telegram_app.bot.send_message(
             chat_id=ORDER_CHAT_ID,
-            text=text_order,
-            reply_markup=status_keyboard
+            text=order_text_with_status(orders[order_number], "new"),
+            reply_markup=build_status_keyboard(order_number, "new")
         )
         orders[order_number]["manager_message_id"] = sent_message.message_id
         save_orders()
