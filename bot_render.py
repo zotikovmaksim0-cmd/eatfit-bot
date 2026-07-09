@@ -474,14 +474,35 @@ def order_status_map():
     }
 
 
-def build_status_keyboard(order_number):
+def build_status_keyboard(order_number, current_status=""):
+    buttons = [
+        ("confirmed", "🔵 Подтвердить"),
+        ("paid", "💳 Оплачен"),
+        ("preparing", "🟠 Готовится"),
+        ("delivery", "🟣 В доставке"),
+        ("done", "🟢 Доставлен"),
+    ]
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔵 Подтвердить", callback_data=f"status_confirmed|{order_number}")],
-        [InlineKeyboardButton("💳 Оплачен", callback_data=f"status_paid|{order_number}")],
-        [InlineKeyboardButton("🟠 Готовится", callback_data=f"status_preparing|{order_number}")],
-        [InlineKeyboardButton("🟣 В доставке", callback_data=f"status_delivery|{order_number}")],
-        [InlineKeyboardButton("🟢 Доставлен", callback_data=f"status_done|{order_number}")],
+        [InlineKeyboardButton(label, callback_data=f"status_{status}|{order_number}")]
+        for status, label in buttons
+        if status != current_status
     ])
+
+
+def clean_order_message_text(text):
+    for marker in ("\n\n📌 Текущий статус:", "\n\n📌 Статус:"):
+        if marker in text:
+            return text.split(marker)[0]
+    return text
+
+
+def order_text_with_status(order, status):
+    status_map = order_status_map()
+    base_text = clean_order_message_text(order.get("order_text", ""))
+    payment_text = order.get("payment_text", "")
+    if payment_text and payment_text not in base_text:
+        base_text += payment_text
+    return f"{base_text}\n\n📌 Текущий статус:\n{status_map.get(status, status)}"
 
 
 
@@ -1141,14 +1162,20 @@ async def confirm_order_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
 
     data = query.data.split("|")
     status = data[0].replace("status_", "")
     order_number = data[1]
 
     if order_number not in orders:
-        return
+        orders[order_number] = {
+            "user_id": None,
+            "status": "new",
+            "source": "telegram_message",
+            "order_text": clean_order_message_text(query.message.text or ""),
+            "manager_message_id": query.message.message_id,
+            "created_at": now_iso(),
+        }
 
     user_id = orders[order_number].get("user_id")
     orders[order_number]["status"] = status
@@ -1169,22 +1196,18 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     try:
-        updated_text = (
-            orders[order_number]["order_text"]
-            + orders[order_number].get("payment_text", "")
-            + f"\n\n📌 Статус:\n{status_map[status]}"
-        )
+        updated_text = order_text_with_status(orders[order_number], status)
 
         await context.bot.edit_message_text(
-            chat_id=ORDER_CHAT_ID,
-            message_id=orders[order_number]["manager_message_id"],
+            chat_id=query.message.chat_id,
+            message_id=orders[order_number].get("manager_message_id") or query.message.message_id,
             text=updated_text,
-            reply_markup=query.message.reply_markup
+            reply_markup=build_status_keyboard(order_number, status)
         )
     except Exception as e:
         print("STATUS UPDATE ERROR:", e)
 
-    await query.answer("Статус обновлен")
+    await query.answer(f"Статус: {status_map.get(status, status)}")
 
 
 async def cancel_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
