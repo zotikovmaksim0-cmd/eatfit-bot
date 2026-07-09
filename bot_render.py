@@ -1,6 +1,6 @@
 # KBJU REWORK VERSION
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, KeyboardButton, ReplyKeyboardMarkup
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -57,7 +57,8 @@ DATA_DIR = Path(os.getenv("EATFIT_DATA_DIR", "."))
 ORDERS_FILE = DATA_DIR / "orders.json"
 USERS_FILE = DATA_DIR / "users.json"
 WELCOME_BONUS = 30000
-BONUS_RATE = 0.05
+WELCOME_BONUS_DAYS = 7
+ORDER_BONUS_DAYS = 30
 XP_PER_1000_VND = 1
 FIRST_ORDER_XP = 300
 FAST_FIRST_ORDER_XP = 500
@@ -68,11 +69,11 @@ STREAK_REWARDS = {
     30: {"xp": 2000, "coins": 1000},
 }
 LEVELS = [
-    {"name": "Legend", "xp": 70000},
-    {"name": "Elite", "xp": 35000},
-    {"name": "Champion", "xp": 15000},
-    {"name": "Athlete", "xp": 5000},
-    {"name": "Rookie", "xp": 0},
+    {"name": "Legend", "xp": 70000, "bonus_rate": 0.10, "discount_rate": 0.10},
+    {"name": "Elite", "xp": 35000, "bonus_rate": 0.07, "discount_rate": 0.07},
+    {"name": "Champion", "xp": 15000, "bonus_rate": 0.05, "discount_rate": 0.05},
+    {"name": "Athlete", "xp": 5000, "bonus_rate": 0.03, "discount_rate": 0},
+    {"name": "Rookie", "xp": 0, "bonus_rate": 0.01, "discount_rate": 0},
 ]
 
 users = {}
@@ -119,10 +120,7 @@ def normalize_phone(phone):
 
 def merge_user_records(primary, duplicate):
     merged = {**duplicate, **primary}
-    merged["bonus_balance"] = max(
-        int(primary.get("bonus_balance", 0)),
-        int(duplicate.get("bonus_balance", 0)),
-    )
+    merged["bonus_entries"] = primary.get("bonus_entries", []) + duplicate.get("bonus_entries", [])
     merged["xp"] = int(primary.get("xp", 0)) + int(duplicate.get("xp", 0))
     merged["coins"] = int(primary.get("coins", 0)) + int(duplicate.get("coins", 0))
     merged["orders_count"] = int(primary.get("orders_count", 0)) + int(duplicate.get("orders_count", 0))
@@ -135,6 +133,7 @@ def merge_user_records(primary, duplicate):
         primary.get("welcome_bonus_granted", True)
         or duplicate.get("welcome_bonus_granted", True)
     )
+    active_bonus_entries(merged)
     return merged
 
 
@@ -167,6 +166,70 @@ def now_iso():
     return datetime.utcnow().isoformat()
 
 
+def future_iso(days):
+    return (datetime.utcnow() + timedelta(days=days)).isoformat()
+
+
+def active_bonus_entries(user):
+    now = datetime.utcnow()
+    entries = []
+    for entry in user.get("bonus_entries", []):
+        try:
+            expires_at = datetime.fromisoformat(entry.get("expires_at", ""))
+        except Exception:
+            expires_at = now - timedelta(seconds=1)
+        amount = int(entry.get("amount", 0))
+        if amount > 0 and expires_at >= now:
+            entries.append({**entry, "amount": amount})
+    if not entries and int(user.get("bonus_balance", 0)) > 0:
+        entries.append({
+            "amount": int(user.get("bonus_balance", 0)),
+            "source": "legacy",
+            "expires_at": future_iso(ORDER_BONUS_DAYS),
+        })
+    entries.sort(key=lambda item: item.get("expires_at", ""))
+    user["bonus_entries"] = entries
+    user["bonus_balance"] = sum(int(entry.get("amount", 0)) for entry in entries)
+    return entries
+
+
+def add_bonus_entry(user, amount, source, days):
+    amount = int(amount)
+    if amount <= 0:
+        return
+    entries = active_bonus_entries(user)
+    entries.append({
+        "amount": amount,
+        "source": source,
+        "expires_at": future_iso(days),
+    })
+    user["bonus_entries"] = entries
+    user["bonus_balance"] = sum(int(entry.get("amount", 0)) for entry in entries)
+
+
+def spend_bonus(user, amount):
+    amount = int(amount)
+    spent = 0
+    entries = active_bonus_entries(user)
+    for entry in entries:
+        if spent >= amount:
+            break
+        use = min(int(entry.get("amount", 0)), amount - spent)
+        entry["amount"] = int(entry.get("amount", 0)) - use
+        spent += use
+    user["bonus_entries"] = [entry for entry in entries if int(entry.get("amount", 0)) > 0]
+    user["bonus_balance"] = sum(int(entry.get("amount", 0)) for entry in user["bonus_entries"])
+    return spent
+
+
+def level_bonus_rate(level):
+    return float(level.get("bonus_rate", 0))
+
+
+def level_discount_rate(level):
+    return float(level.get("discount_rate", 0))
+
+
 def save_users():
     write_json_file(USERS_FILE, users)
 
@@ -180,6 +243,7 @@ def load_users():
 
 
 def public_user(user):
+    active_bonus_entries(user)
     xp = int(user.get("xp", 0))
     level = club_level(xp)
     return {
@@ -198,7 +262,9 @@ def public_user(user):
         "orders_count": int(user.get("orders_count", 0)),
         "total_spent": int(user.get("total_spent", 0)),
         "welcome_bonus": WELCOME_BONUS,
-        "bonus_rate": BONUS_RATE,
+        "bonus_rate": level_bonus_rate(level),
+        "discount_rate": level_discount_rate(level),
+        "bonus_entries": user.get("bonus_entries", []),
     }
 
 
@@ -1065,12 +1131,16 @@ async def site_order(request):
                 "updated_at": now_iso(),
                 "auto_registered": True,
                 "welcome_bonus_granted": False,
+                "bonus_entries": [],
             }
             loyalty_user = users[loyalty_phone]
         use_bonus = bool(data.get("use_bonus"))
         total_value = int(float(data.get("total") or 0))
         bonus_applied = 0
         bonus_earned = 0
+        level_discount = 0
+        bonus_rate = 0
+        discount_rate = 0
         xp_earned = 0
         coins_earned = 0
         streak_days = 0
@@ -1081,12 +1151,18 @@ async def site_order(request):
 
         if loyalty_user:
             orders_before = int(loyalty_user.get("orders_count", 0))
-            level_before = club_level(int(loyalty_user.get("xp", 0)))["name"]
-            available_bonus = int(loyalty_user.get("bonus_balance", 0))
+            level_before_data = club_level(int(loyalty_user.get("xp", 0)))
+            level_before = level_before_data["name"]
+            bonus_rate = level_bonus_rate(level_before_data)
+            discount_rate = level_discount_rate(level_before_data)
+            active_bonus_entries(loyalty_user)
+            level_discount = int(total_value * discount_rate)
+            discounted_total = max(0, total_value - level_discount)
             if use_bonus:
-                bonus_applied = min(available_bonus, total_value)
-                final_total = max(0, total_value - bonus_applied)
-            bonus_earned = int(final_total * BONUS_RATE)
+                bonus_applied = spend_bonus(loyalty_user, discounted_total)
+            final_total = max(0, discounted_total - bonus_applied)
+            bonus_earned = int(final_total * bonus_rate)
+            add_bonus_entry(loyalty_user, bonus_earned, "order", ORDER_BONUS_DAYS)
             xp_earned = int(final_total / 1000) * XP_PER_1000_VND
             if orders_before == 0:
                 xp_earned += FIRST_ORDER_XP
@@ -1101,7 +1177,6 @@ async def site_order(request):
             if streak_changed and streak_days in STREAK_REWARDS:
                 xp_earned += STREAK_REWARDS[streak_days]["xp"]
                 coins_earned += STREAK_REWARDS[streak_days]["coins"]
-            loyalty_user["bonus_balance"] = available_bonus - bonus_applied + bonus_earned
             loyalty_user["xp"] = int(loyalty_user.get("xp", 0)) + xp_earned
             loyalty_user["coins"] = int(loyalty_user.get("coins", 0)) + coins_earned
             loyalty_user["orders_count"] = int(loyalty_user.get("orders_count", 0)) + 1
@@ -1114,11 +1189,12 @@ async def site_order(request):
                 f"Уровень: {level_after}"
                 f"{' ↑' if level_before and level_before != level_after else ''}\n"
                 f"XP за заказ: +{xp_earned:,}\n"
-                f"EatFit Coins: +{coins_earned:,}\n"
+                f"Начисление уровня: {int(bonus_rate * 100)}%\n"
                 f"Серия заказов: {streak_days} дн.\n\n"
                 f"🎁 Бонусы клиента:\n"
+                f"Скидка уровня: {level_discount:,} VND\n"
                 f"Списано: {bonus_applied:,} VND\n"
-                f"Начислится: {bonus_earned:,} VND\n"
+                f"Начислится: {bonus_earned:,} VND (срок {ORDER_BONUS_DAYS} дней)\n"
                 f"Баланс после заказа: {loyalty_user['bonus_balance']:,} VND\n"
             )
 
@@ -1133,6 +1209,7 @@ async def site_order(request):
             f"🛒 Заказ:\n\n"
             f"{data.get('items','')}\n\n"
             f"💰 Сумма заказа: {total_value:,} VND\n"
+            f"🏷 Скидка уровня: {level_discount:,} VND\n"
             f"🎁 Списано бонусов: {bonus_applied:,} VND\n"
             f"💳 К оплате: {final_total:,} VND"
             f"{loyalty_line}"
@@ -1151,6 +1228,9 @@ async def site_order(request):
                 "registered": bool(loyalty_user),
                 "bonus_applied": bonus_applied,
                 "bonus_earned": bonus_earned,
+                "level_discount": level_discount,
+                "bonus_rate": bonus_rate,
+                "discount_rate": discount_rate,
                 "bonus_balance": int(loyalty_user.get("bonus_balance", 0)) if loyalty_user else 0,
                 "final_total": final_total,
                 "xp_earned": xp_earned,
@@ -1179,10 +1259,6 @@ async def loyalty_register(request):
         is_new = user is None
         user = user or {}
         welcome_bonus_granted = bool(user.get("welcome_bonus_granted", False))
-        bonus_balance = int(user.get("bonus_balance", 0))
-        if is_new and not welcome_bonus_granted:
-            bonus_balance = WELCOME_BONUS
-            welcome_bonus_granted = True
         users[phone] = {
             **user,
             "name": data.get("name", user.get("name", "")),
@@ -1190,7 +1266,8 @@ async def loyalty_register(request):
             "phone": phone,
             "contact_method": data.get("contact_method", user.get("contact_method", "")),
             "contact_value": data.get("contact_value", user.get("contact_value", "")),
-            "bonus_balance": bonus_balance,
+            "bonus_balance": int(user.get("bonus_balance", 0)),
+            "bonus_entries": user.get("bonus_entries", []),
             "xp": int(user.get("xp", 0)),
             "coins": int(user.get("coins", 0)),
             "streak_days": int(user.get("streak_days", 0)),
@@ -1201,6 +1278,11 @@ async def loyalty_register(request):
             "updated_at": now_iso(),
             "welcome_bonus_granted": welcome_bonus_granted,
         }
+        if is_new and not welcome_bonus_granted:
+            add_bonus_entry(users[phone], WELCOME_BONUS, "welcome", WELCOME_BONUS_DAYS)
+            users[phone]["welcome_bonus_granted"] = True
+        else:
+            active_bonus_entries(users[phone])
         save_users()
 
         return cors_response({
@@ -1230,7 +1312,7 @@ async def loyalty_status(request):
         "registered": bool(user),
         "user": public_user(user) if user else None,
         "welcome_bonus": WELCOME_BONUS,
-        "bonus_rate": BONUS_RATE,
+        "bonus_rate": level_bonus_rate(club_level(int(user.get("xp", 0)))) if user else level_bonus_rate(LEVELS[-1]),
     })
 
 
