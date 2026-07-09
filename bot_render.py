@@ -319,6 +319,27 @@ def load_orders():
             orders = json.load(f)
 
 
+def order_status_map():
+    return {
+        "new": "🟡 Новый",
+        "confirmed": "🔵 Подтвержден",
+        "paid": "💳 Оплачен",
+        "preparing": "🟠 Готовится",
+        "delivery": "🟣 В доставке",
+        "done": "🟢 Доставлен",
+    }
+
+
+def build_status_keyboard(order_number):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔵 Подтвердить", callback_data=f"status_confirmed|{order_number}")],
+        [InlineKeyboardButton("💳 Оплачен", callback_data=f"status_paid|{order_number}")],
+        [InlineKeyboardButton("🟠 Готовится", callback_data=f"status_preparing|{order_number}")],
+        [InlineKeyboardButton("🟣 В доставке", callback_data=f"status_delivery|{order_number}")],
+        [InlineKeyboardButton("🟢 Доставлен", callback_data=f"status_done|{order_number}")],
+    ])
+
+
 
 def build_order_preview(user_id):
     products = get_products()
@@ -588,13 +609,7 @@ async def checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_map = {
-        "new": "🟡 Новый",
-        "confirmed": "🔵 Подтвержден",
-        "preparing": "🟠 Готовится",
-        "delivery": "🟣 В доставке",
-        "done": "🟢 Доставлен"
-    }
+    status_map = order_status_map()
 
     lines = ["📦 Активные заказы\n"]
 
@@ -624,6 +639,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = {
         "new": 0,
         "confirmed": 0,
+        "paid": 0,
         "preparing": 0,
         "delivery": 0,
         "done": 0
@@ -650,6 +666,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Всего заказов: {total_orders}\n\n"
         f"🟡 Новые: {stats['new']}\n"
         f"🔵 Подтверждено: {stats['confirmed']}\n"
+        f"💳 Оплачено: {stats['paid']}\n"
         f"🟠 Готовится: {stats['preparing']}\n"
         f"🟣 В доставке: {stats['delivery']}\n"
         f"🟢 Доставлено: {stats['done']}\n\n"
@@ -932,12 +949,7 @@ async def confirm_order_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     data = order_data[user_id]
 
-    status_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔵 Подтвердить", callback_data=f"status_confirmed|{order_number}")],
-        [InlineKeyboardButton("🟠 Готовится", callback_data=f"status_preparing|{order_number}")],
-        [InlineKeyboardButton("🟣 В доставке", callback_data=f"status_delivery|{order_number}")],
-        [InlineKeyboardButton("🟢 Доставлен", callback_data=f"status_done|{order_number}")]
-    ])
+    status_keyboard = build_status_keyboard(order_number)
 
     order_text = (
         f"🔔 Новый заказ\n"
@@ -998,21 +1010,17 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders[order_number]["status"] = status
     save_orders()
 
-    status_map = {
-        "confirmed": "🔵 Подтвержден",
-        "preparing": "🟠 Готовится",
-        "delivery": "🟣 В доставке",
-        "done": "🟢 Доставлен"
-    }
+    status_map = order_status_map()
 
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=(
-            f"📦 Обновление заказа\n\n"
-            f"Заказ: {order_number}\n\n"
-            f"Статус: {status_map[status]}"
+    if user_id:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"📦 Обновление заказа\n\n"
+                f"Заказ: {order_number}\n\n"
+                f"Статус: {status_map[status]}"
+            )
         )
-    )
 
     try:
         updated_text = (
@@ -1120,6 +1128,7 @@ async def site_order(request):
             part for part in [data.get("name", ""), data.get("surname", "")]
             if part
         )
+        order_number = data.get("order_id") or datetime.now().strftime("SITE-%Y%m%d-%H%M%S")
 
         loyalty_phone, loyalty_user = get_user_by_phone(data.get("loyalty_phone") or data.get("phone"))
         if loyalty_phone and not loyalty_user:
@@ -1208,7 +1217,7 @@ async def site_order(request):
 
         text_order = (
             f"🔔 Новый заказ с сайта\n\n"
-            f"№ {data.get('order_id','')}\n\n"
+            f"№ {order_number}\n\n"
             f"👤 {customer_name}\n\n"
             f"📞 {data.get('phone','')}\n\n"
             f"{contact_line}"
@@ -1222,11 +1231,26 @@ async def site_order(request):
             f"💳 К оплате: {final_total:,} VND"
             f"{loyalty_line}"
         )
+        status_keyboard = build_status_keyboard(order_number)
+        orders[order_number] = {
+            "user_id": None,
+            "status": "new",
+            "source": "site",
+            "order_text": text_order,
+            "manager_message_id": None,
+            "customer_name": customer_name,
+            "phone": data.get("phone", ""),
+            "total": final_total,
+            "created_at": now_iso(),
+        }
 
-        await telegram_app.bot.send_message(
+        sent_message = await telegram_app.bot.send_message(
             chat_id=ORDER_CHAT_ID,
-            text=text_order
+            text=text_order,
+            reply_markup=status_keyboard
         )
+        orders[order_number]["manager_message_id"] = sent_message.message_id
+        save_orders()
 
         print("SITE ORDER SENT TO TELEGRAM")
 
