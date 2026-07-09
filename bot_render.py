@@ -52,7 +52,7 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
-APP_VERSION = "order-status-web-links-v1"
+APP_VERSION = "order-status-callback-flow-v2"
 
 telegram_app = None
 
@@ -485,13 +485,14 @@ def build_status_keyboard(order_number, current_status=""):
         ("delivery", "🟣 В доставке"),
         ("done", "🟢 Доставлен"),
     ]
+    current_index = next(
+        (index for index, item in enumerate(buttons) if item[0] == current_status),
+        -1,
+    )
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            label,
-            url=f"{PUBLIC_BASE_URL}/order-status?order={quote(order_number)}&status={status}"
-        )]
-        for status, label in buttons
-        if status != current_status
+        [InlineKeyboardButton(label, callback_data=f"orderstatus_{status}|{order_number}")]
+        for index, (status, label) in enumerate(buttons)
+        if index > current_index
     ])
 
 
