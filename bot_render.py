@@ -52,6 +52,7 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
+APP_VERSION = "order-status-web-links-v1"
 
 telegram_app = None
 
@@ -1577,11 +1578,11 @@ async def test(request):
     try:
         await telegram_app.bot.send_message(
             chat_id=ORDER_CHAT_ID,
-            text="✅ TEST MESSAGE FROM RENDER"
+            text=f"✅ TEST MESSAGE FROM RENDER\nVersion: {APP_VERSION}"
         )
-        return web.json_response({"success": True})
+        return web.json_response({"success": True, "version": APP_VERSION})
     except Exception as e:
-        return web.json_response({"success": False, "error": str(e)})
+        return web.json_response({"success": False, "version": APP_VERSION, "error": str(e)})
 
 
 def start_web_server():
