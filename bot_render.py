@@ -49,7 +49,7 @@ kbju_data = {}
 
 orders = {}
 
-ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "619240147"))
+ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 
 telegram_app = None
 
