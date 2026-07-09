@@ -52,7 +52,7 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
-APP_VERSION = "order-status-callback-flow-v2"
+APP_VERSION = "order-status-webhook-flow-v3"
 
 telegram_app = None
 
@@ -1586,33 +1586,29 @@ async def test(request):
         return web.json_response({"success": False, "version": APP_VERSION, "error": str(e)})
 
 
-def start_web_server():
-    async def runner():
-        app_web = web.Application()
-        app_web.router.add_route("*", "/site-order", site_order)
-        app_web.router.add_route("*", "/loyalty-register", loyalty_register)
-        app_web.router.add_route("*", "/loyalty-status", loyalty_status)
-        app_web.router.add_route("*", "/order-status", order_status_web)
-        app_web.router.add_get("/test", test)
-
-        runner = web.AppRunner(app_web)
-        await runner.setup()
-
-        site = web.TCPSite(runner, "0.0.0.0", 10000)
-        await site.start()
-
-        while True:
-            await asyncio.sleep(3600)
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(runner())
+async def telegram_webhook(request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, telegram_app.bot)
+        await telegram_app.process_update(update)
+        return web.Response(text="ok")
+    except Exception as e:
+        print("TELEGRAM WEBHOOK ERROR:", e)
+        return web.Response(text="webhook error", status=500)
 
 
-def main():
-    load_orders()
-    load_users()
+def create_web_app():
+    app_web = web.Application()
+    app_web.router.add_route("*", "/site-order", site_order)
+    app_web.router.add_route("*", "/loyalty-register", loyalty_register)
+    app_web.router.add_route("*", "/loyalty-status", loyalty_status)
+    app_web.router.add_route("*", "/order-status", order_status_web)
+    app_web.router.add_route("*", "/telegram-webhook", telegram_webhook)
+    app_web.router.add_get("/test", test)
+    return app_web
 
+
+def create_bot_application():
     global telegram_app
 
     app = Application.builder().token(TOKEN).build()
@@ -1639,13 +1635,57 @@ def main():
     app.add_handler(CallbackQueryHandler(status_callback, pattern="^(status_|orderstatus_)"))
     app.add_handler(CallbackQueryHandler(cancel_order_callback, pattern="^cancel_order$"))
 
-    threading.Thread(target=start_web_server, daemon=True).start()
-
-    app.run_polling()
+    return app
 
 
-import asyncio
+async def run_webhook_server(app):
+    app_web = create_web_app()
+
+    await app.initialize()
+    await app.start()
+
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 10000)
+    await site.start()
+
+    webhook_url = f"{PUBLIC_BASE_URL}/telegram-webhook"
+    await app.bot.set_webhook(webhook_url)
+    print(f"WEBHOOK SET: {webhook_url}")
+
+    while True:
+        await asyncio.sleep(3600)
+
+
+def start_web_server():
+    async def runner():
+        app_web = create_web_app()
+        runner_app = web.AppRunner(app_web)
+        await runner_app.setup()
+        site = web.TCPSite(runner_app, "0.0.0.0", 10000)
+        await site.start()
+
+        while True:
+            await asyncio.sleep(3600)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(runner())
+
+
+def main():
+    load_orders()
+    load_users()
+
+    app = create_bot_application()
+
+    if os.getenv("BOT_MODE", "webhook").lower() == "polling":
+        threading.Thread(target=start_web_server, daemon=True).start()
+        app.run_polling()
+        return
+
+    asyncio.run(run_webhook_server(app))
+
 
 if __name__ == "__main__":
-    asyncio.set_event_loop(asyncio.new_event_loop())
     main()
