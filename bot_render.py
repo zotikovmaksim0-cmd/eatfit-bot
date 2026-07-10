@@ -52,7 +52,7 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
-APP_VERSION = "order-status-webhook-flow-v3"
+APP_VERSION = "order-status-webhook-callbacks-v4"
 
 telegram_app = None
 
@@ -1650,7 +1650,10 @@ async def run_webhook_server(app):
     await site.start()
 
     webhook_url = f"{PUBLIC_BASE_URL}/telegram-webhook"
-    await app.bot.set_webhook(webhook_url)
+    await app.bot.set_webhook(
+        webhook_url,
+        allowed_updates=["message", "callback_query"],
+    )
     print(f"WEBHOOK SET: {webhook_url}")
 
     while True:
