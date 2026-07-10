@@ -1630,6 +1630,16 @@ async def test(request):
         return web.json_response({"success": False, "version": APP_VERSION, "error": str(e)})
 
 
+async def version(request):
+    return web.json_response({
+        "success": True,
+        "version": APP_VERSION,
+        "data_dir": str(DATA_DIR),
+        "orders_file_exists": ORDERS_FILE.exists(),
+        "users_file_exists": USERS_FILE.exists(),
+    })
+
+
 async def telegram_webhook(request):
     try:
         data = await request.json()
@@ -1649,6 +1659,7 @@ def create_web_app():
     app_web.router.add_route("*", "/loyalty-orders", loyalty_orders)
     app_web.router.add_route("*", "/order-status", order_status_web)
     app_web.router.add_route("*", "/telegram-webhook", telegram_webhook)
+    app_web.router.add_get("/version", version)
     app_web.router.add_get("/test", test)
     return app_web
 
