@@ -533,7 +533,7 @@ async def update_order_status_message(order_number, status, bot, chat_id=None, m
     order = orders[order_number]
     order["status"] = status
     order["updated_at"] = now_iso()
-    if status == "paid":
+    if status in ("paid", "done"):
         apply_loyalty_payment(order_number)
         order = orders[order_number]
         order["updated_at"] = now_iso()
@@ -1240,7 +1240,7 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = orders[order_number].get("user_id")
     orders[order_number]["status"] = status
     orders[order_number]["updated_at"] = now_iso()
-    if status == "paid":
+    if status in ("paid", "done"):
         apply_loyalty_payment(order_number)
         orders[order_number]["updated_at"] = now_iso()
     save_orders()
@@ -1561,6 +1561,9 @@ async def loyalty_orders(request):
         order_phone = normalize_phone(order.get("phone", ""))
         loyalty_phone = normalize_phone(order.get("loyalty_phone", ""))
         if phone in (order_phone, loyalty_phone):
+            if order.get("status") in ("paid", "done") and order.get("loyalty_phone") and not order.get("loyalty_applied"):
+                apply_loyalty_payment(order_number)
+                order = orders.get(order_number, order)
             matched_orders.append(public_order(order_number, order))
 
     matched_orders.sort(
