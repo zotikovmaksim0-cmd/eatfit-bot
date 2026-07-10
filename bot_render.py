@@ -63,13 +63,11 @@ WELCOME_BONUS = 30000
 WELCOME_BONUS_DAYS = 7
 ORDER_BONUS_DAYS = 30
 XP_PER_1000_VND = 1
-FIRST_ORDER_XP = 300
-FAST_FIRST_ORDER_XP = 500
 COINS_PER_100000_VND = 100
 STREAK_REWARDS = {
-    7: {"xp": 500, "coins": 0},
-    14: {"xp": 1000, "coins": 0},
-    30: {"xp": 2000, "coins": 1000},
+    7: {"xp": 0, "coins": 0},
+    14: {"xp": 0, "coins": 0},
+    30: {"xp": 0, "coins": 1000},
 }
 LEVELS = [
     {"name": "Legend", "xp": 70000, "bonus_rate": 0.10, "discount_rate": 0.10},
@@ -342,14 +340,6 @@ def loyalty_preview(user, total_value, use_bonus):
     final_total = max(0, discounted_total - bonus_applied)
     bonus_earned = int(final_total * bonus_rate)
     xp_earned = int(final_total / 1000) * XP_PER_1000_VND
-    if int(user.get("orders_count", 0)) == 0:
-        xp_earned += FIRST_ORDER_XP
-        try:
-            created_at = datetime.fromisoformat(user.get("created_at", now_iso()))
-            if (datetime.utcnow() - created_at).total_seconds() <= 86400:
-                xp_earned += FAST_FIRST_ORDER_XP
-        except Exception:
-            pass
     coins_earned = int(final_total / 100000) * COINS_PER_100000_VND
 
     return {
@@ -385,7 +375,6 @@ def apply_loyalty_payment(order_number):
 
     total_value = int(order.get("total_value", order.get("total", 0)) or 0)
     use_bonus = bool(order.get("use_bonus"))
-    orders_before = int(user.get("orders_count", 0))
     level_before_data = club_level(int(user.get("xp", 0)))
     level_before = level_before_data["name"]
     bonus_rate = level_bonus_rate(level_before_data)
@@ -398,14 +387,6 @@ def apply_loyalty_payment(order_number):
     bonus_earned = int(final_total * bonus_rate)
     add_bonus_entry(user, bonus_earned, "order", ORDER_BONUS_DAYS)
     xp_earned = int(final_total / 1000) * XP_PER_1000_VND
-    if orders_before == 0:
-        xp_earned += FIRST_ORDER_XP
-        try:
-            created_at = datetime.fromisoformat(user.get("created_at", now_iso()))
-            if (datetime.utcnow() - created_at).total_seconds() <= 86400:
-                xp_earned += FAST_FIRST_ORDER_XP
-        except Exception:
-            pass
     coins_earned = int(final_total / 100000) * COINS_PER_100000_VND
     streak_days, streak_changed = update_order_streak(user)
     if streak_changed and streak_days in STREAK_REWARDS:
