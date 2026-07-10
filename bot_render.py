@@ -52,7 +52,7 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
-APP_VERSION = "phone-validation-quick-order-v1"
+APP_VERSION = "loyalty-order-link-v1"
 
 telegram_app = None
 
@@ -1399,26 +1399,10 @@ async def site_order(request):
             if not normalized_loyalty_phone:
                 return cors_response({"success": False, "error": "invalid_loyalty_phone"}, status=400)
             loyalty_phone, loyalty_user = get_user_by_phone(normalized_loyalty_phone)
-        if loyalty_phone and not loyalty_user:
-            users[loyalty_phone] = {
-                "name": data.get("name", ""),
-                "surname": data.get("surname", ""),
-                "phone": loyalty_phone,
-                "contact_method": contact_method,
-                "contact_value": contact_value,
-                "bonus_balance": 0,
-                "xp": 0,
-                "coins": 0,
-                "streak_days": 0,
-                "orders_count": 0,
-                "total_spent": 0,
-                "created_at": now_iso(),
-                "updated_at": now_iso(),
-                "auto_registered": True,
-                "welcome_bonus_granted": False,
-                "bonus_entries": [],
-            }
-            loyalty_user = users[loyalty_phone]
+        else:
+            loyalty_phone, loyalty_user = get_user_by_phone(customer_phone)
+        if not loyalty_user:
+            loyalty_phone = ""
         use_bonus = bool(data.get("use_bonus"))
         total_value = int(float(data.get("total") or 0))
         loyalty_result = loyalty_preview(loyalty_user, total_value, use_bonus)
