@@ -495,6 +495,7 @@ def public_order(order_number, order):
         "delivery_map": order.get("delivery_map", ""),
         "contact_method": order.get("contact_method", ""),
         "contact_value": order.get("contact_value", ""),
+        "comment": order.get("comment", ""),
         "loyalty": order.get("loyalty", {}),
     }
 
