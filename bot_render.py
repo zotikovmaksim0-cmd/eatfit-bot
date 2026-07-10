@@ -52,7 +52,7 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
-APP_VERSION = "order-status-webhook-callbacks-v4"
+APP_VERSION = "customer-order-history-v1"
 
 telegram_app = None
 
@@ -477,6 +477,28 @@ def order_status_map():
     }
 
 
+def public_order(order_number, order):
+    status = order.get("status", "new")
+    status_map = order_status_map()
+    return {
+        "order_id": order_number,
+        "status": status,
+        "status_label": status_map.get(status, status),
+        "created_at": order.get("created_at", ""),
+        "updated_at": order.get("updated_at", order.get("created_at", "")),
+        "customer_name": order.get("customer_name", ""),
+        "phone": order.get("phone", ""),
+        "total": int(order.get("total", 0) or 0),
+        "total_value": int(order.get("total_value", order.get("total", 0)) or 0),
+        "items": order.get("items", ""),
+        "address": order.get("address", ""),
+        "delivery_map": order.get("delivery_map", ""),
+        "contact_method": order.get("contact_method", ""),
+        "contact_value": order.get("contact_value", ""),
+        "loyalty": order.get("loyalty", {}),
+    }
+
+
 def build_status_keyboard(order_number, current_status=""):
     buttons = [
         ("confirmed", "🔵 Подтвердить"),
@@ -529,9 +551,11 @@ async def update_order_status_message(order_number, status, bot, chat_id=None, m
 
     order = orders[order_number]
     order["status"] = status
+    order["updated_at"] = now_iso()
     if status == "paid":
         apply_loyalty_payment(order_number)
         order = orders[order_number]
+        order["updated_at"] = now_iso()
     save_orders()
 
     updated_text = order_text_with_status(order, status)
@@ -1234,8 +1258,10 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = orders[order_number].get("user_id")
     orders[order_number]["status"] = status
+    orders[order_number]["updated_at"] = now_iso()
     if status == "paid":
         apply_loyalty_payment(order_number)
+        orders[order_number]["updated_at"] = now_iso()
     save_orders()
 
     if user_id:
@@ -1432,6 +1458,12 @@ async def site_order(request):
             "manager_message_id": None,
             "customer_name": customer_name,
             "phone": data.get("phone", ""),
+            "address": data.get("address", ""),
+            "delivery_map": map_value,
+            "contact_method": contact_method,
+            "contact_value": contact_value,
+            "comment": data.get("comment", ""),
+            "items": data.get("items", ""),
             "total": final_total,
             "total_value": total_value,
             "loyalty_phone": loyalty_phone,
@@ -1439,6 +1471,7 @@ async def site_order(request):
             "loyalty_applied": False,
             "loyalty": loyalty_result,
             "created_at": now_iso(),
+            "updated_at": now_iso(),
         }
 
         sent_message = await telegram_app.bot.send_message(
@@ -1530,6 +1563,35 @@ async def loyalty_status(request):
     })
 
 
+async def loyalty_orders(request):
+    if request.method == "OPTIONS":
+        return cors_options()
+
+    phone = normalize_phone(request.query.get("phone", ""))
+    if not phone and request.method == "POST":
+        try:
+            data = await request.json()
+            phone = normalize_phone(data.get("phone"))
+        except Exception:
+            phone = ""
+
+    if not phone:
+        return cors_response({"success": False, "error": "phone_required"}, status=400)
+
+    matched_orders = []
+    for order_number, order in orders.items():
+        order_phone = normalize_phone(order.get("phone", ""))
+        loyalty_phone = normalize_phone(order.get("loyalty_phone", ""))
+        if phone in (order_phone, loyalty_phone):
+            matched_orders.append(public_order(order_number, order))
+
+    matched_orders.sort(
+        key=lambda item: item.get("created_at") or "",
+        reverse=True,
+    )
+    return cors_response({"success": True, "orders": matched_orders})
+
+
 async def order_status_web(request):
     if request.method == "OPTIONS":
         return cors_options()
@@ -1602,6 +1664,7 @@ def create_web_app():
     app_web.router.add_route("*", "/site-order", site_order)
     app_web.router.add_route("*", "/loyalty-register", loyalty_register)
     app_web.router.add_route("*", "/loyalty-status", loyalty_status)
+    app_web.router.add_route("*", "/loyalty-orders", loyalty_orders)
     app_web.router.add_route("*", "/order-status", order_status_web)
     app_web.router.add_route("*", "/telegram-webhook", telegram_webhook)
     app_web.router.add_get("/test", test)
