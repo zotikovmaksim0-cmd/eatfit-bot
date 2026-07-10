@@ -52,7 +52,7 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
-APP_VERSION = "customer-order-history-v1"
+APP_VERSION = "phone-validation-quick-order-v1"
 
 telegram_app = None
 
@@ -112,13 +112,13 @@ def normalize_phone(phone):
     digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
     if digits.startswith("00"):
         digits = digits[2:]
-    if digits.startswith("84") and len(digits) >= 10:
+    if digits.startswith("84") and len(digits) == 11 and digits[2] in "35789":
         return digits
-    if digits.startswith("0") and len(digits) >= 9:
+    if digits.startswith("0") and len(digits) == 10 and digits[1] in "35789":
         return "84" + digits[1:]
     if len(digits) == 9 and digits[0] in "35789":
         return "84" + digits
-    return digits
+    return ""
 
 
 def merge_user_records(primary, duplicate):
@@ -1381,13 +1381,24 @@ async def site_order(request):
 
         print("SITE ORDER RECEIVED")
         print(data)
+        customer_phone = normalize_phone(data.get("phone"))
+        if not customer_phone:
+            return cors_response({"success": False, "error": "invalid_phone"}, status=400)
+
         customer_name = " ".join(
             part for part in [data.get("name", ""), data.get("surname", "")]
             if part
         )
         order_number = data.get("order_id") or datetime.now().strftime("SITE-%Y%m%d-%H%M%S")
 
-        loyalty_phone, loyalty_user = get_user_by_phone(data.get("loyalty_phone") or data.get("phone"))
+        requested_loyalty_phone = str(data.get("loyalty_phone") or "").strip()
+        loyalty_phone = ""
+        loyalty_user = None
+        if requested_loyalty_phone:
+            normalized_loyalty_phone = normalize_phone(requested_loyalty_phone)
+            if not normalized_loyalty_phone:
+                return cors_response({"success": False, "error": "invalid_loyalty_phone"}, status=400)
+            loyalty_phone, loyalty_user = get_user_by_phone(normalized_loyalty_phone)
         if loyalty_phone and not loyalty_user:
             users[loyalty_phone] = {
                 "name": data.get("name", ""),
@@ -1438,7 +1449,7 @@ async def site_order(request):
             f"🔔 Новый заказ с сайта\n\n"
             f"№ {order_number}\n\n"
             f"👤 {customer_name}\n\n"
-            f"📞 {data.get('phone','')}\n\n"
+            f"📞 {customer_phone}\n\n"
             f"{contact_line}"
             f"🏠 {data.get('address','')}\n\n"
             f"{map_line}"
@@ -1457,7 +1468,7 @@ async def site_order(request):
             "order_text": text_order,
             "manager_message_id": None,
             "customer_name": customer_name,
-            "phone": data.get("phone", ""),
+            "phone": customer_phone,
             "address": data.get("address", ""),
             "delivery_map": map_value,
             "contact_method": contact_method,
@@ -1501,7 +1512,7 @@ async def loyalty_register(request):
         data = await request.json()
         phone, user = get_user_by_phone(data.get("phone"))
         if not phone:
-            return cors_response({"success": False, "error": "phone_required"}, status=400)
+            return cors_response({"success": False, "error": "invalid_phone"}, status=400)
 
         is_new = user is None
         user = user or {}
@@ -1554,6 +1565,8 @@ async def loyalty_status(request):
             phone = ""
 
     phone, user = get_user_by_phone(phone)
+    if not phone:
+        return cors_response({"success": False, "error": "invalid_phone"}, status=400)
     return cors_response({
         "success": True,
         "registered": bool(user),
@@ -1576,7 +1589,7 @@ async def loyalty_orders(request):
             phone = ""
 
     if not phone:
-        return cors_response({"success": False, "error": "phone_required"}, status=400)
+        return cors_response({"success": False, "error": "invalid_phone"}, status=400)
 
     matched_orders = []
     for order_number, order in orders.items():
