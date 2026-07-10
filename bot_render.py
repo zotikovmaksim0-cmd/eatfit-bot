@@ -52,11 +52,12 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
-APP_VERSION = "xp-order-total-v1"
+APP_VERSION = "loyalty-delivered-persist-v1"
 
 telegram_app = None
 
-DATA_DIR = Path(os.getenv("EATFIT_DATA_DIR", "."))
+DEFAULT_DATA_DIR = "/var/data" if Path("/var/data").exists() else "."
+DATA_DIR = Path(os.getenv("EATFIT_DATA_DIR") or os.getenv("RENDER_DATA_DIR") or DEFAULT_DATA_DIR)
 ORDERS_FILE = DATA_DIR / "orders.json"
 USERS_FILE = DATA_DIR / "users.json"
 WELCOME_BONUS = 30000
