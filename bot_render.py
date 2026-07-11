@@ -5,6 +5,7 @@ from html import escape
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 from urllib.parse import quote
 from aiohttp import web
@@ -504,22 +505,69 @@ def order_status_map():
     }
 
 
+def parse_money(value):
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return int(digits or 0)
+
+
+def raw_phone_key(value):
+    return "".join(ch for ch in str(value or "") if ch.isdigit()) or str(value or "")
+
+
+def first_legacy_match(pattern, text):
+    match = re.search(pattern, text, flags=re.S)
+    return match.group(1).strip() if match else ""
+
+
+def legacy_created_at(order_number):
+    match = re.search(r"(\d{8})-(\d{6})", str(order_number or ""))
+    if not match:
+        return ""
+    try:
+        return datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S").isoformat()
+    except Exception:
+        return ""
+
+
+def legacy_order_fields(order_number, order):
+    text = order.get("order_text", "") or ""
+    if not text:
+        return {}
+    items = first_legacy_match(r"🛒\s*Заказ:\s*(.*?)(?:\n\n💰|\n💰|$)", text)
+    total_text = (
+        first_legacy_match(r"💰\s*Итого:\s*([^\n]+)", text)
+        or first_legacy_match(r"💰\s*Сумма заказа:\s*([^\n]+)", text)
+        or first_legacy_match(r"💳\s*К оплате:\s*([^\n]+)", text)
+    )
+    return {
+        "created_at": legacy_created_at(order_number),
+        "customer_name": first_legacy_match(r"👤\s*([^\n]+)", text),
+        "phone": first_legacy_match(r"📞\s*([^\n]+)", text),
+        "address": first_legacy_match(r"🏠\s*([^\n]+)", text),
+        "delivery_map": first_legacy_match(r"📍(?:\s*Точка на карте:)?\s*([^\n]+)", text),
+        "items": items,
+        "total": parse_money(total_text),
+        "total_value": parse_money(total_text),
+    }
+
+
 def public_order(order_number, order):
     status = order.get("status", "new")
     status_map = order_status_map()
+    legacy = legacy_order_fields(order_number, order)
     return {
         "order_id": order_number,
         "status": status,
         "status_label": status_map.get(status, status),
-        "created_at": order.get("created_at", ""),
-        "updated_at": order.get("updated_at", order.get("created_at", "")),
-        "customer_name": order.get("customer_name", ""),
-        "phone": order.get("phone", ""),
-        "total": int(order.get("total", 0) or 0),
-        "total_value": int(order.get("total_value", order.get("total", 0)) or 0),
-        "items": order.get("items", ""),
-        "address": order.get("address", ""),
-        "delivery_map": order.get("delivery_map", ""),
+        "created_at": order.get("created_at", "") or legacy.get("created_at", ""),
+        "updated_at": order.get("updated_at", order.get("created_at", "")) or legacy.get("created_at", ""),
+        "customer_name": order.get("customer_name", "") or legacy.get("customer_name", ""),
+        "phone": order.get("phone", "") or legacy.get("phone", ""),
+        "total": int(order.get("total", 0) or legacy.get("total", 0) or 0),
+        "total_value": int(order.get("total_value", order.get("total", 0)) or legacy.get("total_value", 0) or 0),
+        "items": order.get("items", "") or legacy.get("items", ""),
+        "address": order.get("address", "") or legacy.get("address", ""),
+        "delivery_map": order.get("delivery_map", "") or legacy.get("delivery_map", ""),
         "contact_method": order.get("contact_method", ""),
         "contact_value": order.get("contact_value", ""),
         "comment": order.get("comment", ""),
@@ -568,7 +616,7 @@ def build_admin_database():
 
     customers = {}
     for phone, user in users.items():
-        normalized = normalize_phone(phone or user.get("phone", ""))
+        normalized = normalize_phone(phone or user.get("phone", "")) or raw_phone_key(phone or user.get("phone", ""))
         if not normalized:
             normalized = phone or user.get("phone", "")
         customers.setdefault(normalized, {
@@ -591,7 +639,12 @@ def build_admin_database():
         customers[normalized]["surname"] = user.get("surname", "")
 
     for item in admin_orders:
-        phone = normalize_phone(item.get("phone", "")) or normalize_phone(item.get("loyalty_phone", "")) or item.get("phone", "")
+        phone = (
+            normalize_phone(item.get("phone", ""))
+            or normalize_phone(item.get("loyalty_phone", ""))
+            or raw_phone_key(item.get("phone", ""))
+            or raw_phone_key(item.get("loyalty_phone", ""))
+        )
         if not phone:
             phone = f"no-phone:{item.get('customer_name', 'unknown')}"
         customer = customers.setdefault(phone, {
