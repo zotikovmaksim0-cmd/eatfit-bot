@@ -1894,8 +1894,14 @@ async def admin_dashboard(request):
             f"{data['status_labels'].get(status, status)}: {count}"
             for status, count in customer.get("statuses", {}).items()
         ) or "—"
+        customer_search = " ".join([
+            display_name,
+            customer.get("phone", ""),
+            profile.get("level", ""),
+            status_text,
+        ]).lower()
         customer_rows.append(
-            "<tr>"
+            f"<tr data-search=\"{escape(customer_search)}\">"
             f"<td>{escape(display_name)}</td>"
             f"<td>{escape(customer.get('phone', ''))}</td>"
             f"<td>{'Да' if customer.get('registered') else 'Нет'}</td>"
@@ -1913,8 +1919,19 @@ async def admin_dashboard(request):
     order_rows = []
     for order in data["orders"]:
         loyalty = order.get("loyalty") or {}
+        order_search = " ".join([
+            order.get("created_at", ""),
+            order.get("order_id", ""),
+            order.get("status_label", order.get("status", "")),
+            order.get("customer_name", ""),
+            order.get("phone", ""),
+            order.get("contact_method", ""),
+            order.get("contact_value", ""),
+            order.get("address", ""),
+            order.get("items", ""),
+        ]).lower()
         order_rows.append(
-            "<tr>"
+            f"<tr data-search=\"{escape(order_search)}\" data-status=\"{escape(order.get('status', ''))}\" data-date=\"{escape((order.get('created_at', '') or '')[:10])}\">"
             f"<td>{escape(order.get('created_at', ''))}</td>"
             f"<td>{escape(order.get('order_id', ''))}</td>"
             f"<td>{escape(order.get('status_label', order.get('status', '')))}</td>"
@@ -1943,10 +1960,15 @@ header{{position:sticky;top:0;z-index:2;padding:18px 24px;background:#102015;col
 h1{{margin:0 0 6px;font-size:26px}} a{{color:#317d20;font-weight:700}} header a{{color:#dff7d3}}
 main{{padding:22px;max-width:1500px;margin:auto}} .stats{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:18px}}
 .stat{{padding:14px;background:#fff;border:1px solid #dfe8da;border-radius:14px}} .stat b{{display:block;font-size:22px;color:#172015}} .stat span{{color:#667461;font-size:12px}}
-section{{margin:18px 0;padding:18px;background:#fff;border:1px solid #dfe8da;border-radius:18px;overflow:auto}}
-h2{{margin:0 0 12px}} table{{width:100%;border-collapse:collapse;font-size:13px}} th,td{{padding:9px;border-bottom:1px solid #edf2e9;text-align:left;vertical-align:top}} th{{position:sticky;top:74px;background:#f6fbf1;z-index:1}} pre{{margin:0;white-space:pre-wrap;font-family:inherit}}
+section{{margin:18px 0;padding:18px;background:#fff;border:1px solid #dfe8da;border-radius:18px;overflow:hidden}}
+h2{{margin:0 0 12px}} table{{width:100%;min-width:1180px;border-collapse:collapse;font-size:13px}} th,td{{padding:9px;border-bottom:1px solid #edf2e9;text-align:left;vertical-align:top}} th{{position:sticky;top:0;background:#f6fbf1;z-index:1}} pre{{margin:0;white-space:pre-wrap;font-family:inherit}}
+.table-scroll{{max-height:56vh;overflow:auto;border:1px solid #edf2e9;border-radius:12px}}
+.filters{{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:10px;margin:0 0 12px}}
+.filters input,.filters select{{width:100%;height:40px;padding:0 10px;border:1px solid #dfe8da;border-radius:10px;background:#fff;color:#172015;font:inherit}}
+.filters button{{height:40px;border:0;border-radius:10px;background:#63bd2b;color:#fff;font-weight:800;cursor:pointer}}
+.row-count{{margin:0 0 10px;color:#667461;font-size:13px}}
 .tools{{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}} .muted{{color:#91a08c;font-size:13px}}
-@media(max-width:900px){{.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}} main{{padding:12px}}}}
+@media(max-width:900px){{.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}.filters{{grid-template-columns:1fr}} main{{padding:12px}}}}
 </style>
 </head>
 <body>
@@ -1966,13 +1988,75 @@ h2{{margin:0 0 12px}} table{{width:100%;border-collapse:collapse;font-size:13px}
 </div>
 <section>
 <h2>Покупатели</h2>
-<table><thead><tr><th>Имя</th><th>Телефон</th><th>Бонусы</th><th>Уровень</th><th>XP</th><th>Баланс</th><th>Заказов</th><th>Оплачено</th><th>Сумма</th><th>Статусы</th><th>Последний заказ</th></tr></thead><tbody>{''.join(customer_rows)}</tbody></table>
+<div class="filters">
+<input id="customerSearch" type="search" placeholder="Поиск по ФИО, телефону, уровню">
+<button type="button" onclick="clearCustomerFilters()">Сбросить</button>
+</div>
+<div id="customerCount" class="row-count"></div>
+<div class="table-scroll">
+<table><thead><tr><th>Имя</th><th>Телефон</th><th>Бонусы</th><th>Уровень</th><th>XP</th><th>Баланс</th><th>Заказов</th><th>Оплачено</th><th>Сумма</th><th>Статусы</th><th>Последний заказ</th></tr></thead><tbody id="customerRows">{''.join(customer_rows)}</tbody></table>
+</div>
 </section>
 <section>
 <h2>Все заказы</h2>
-<table><thead><tr><th>Дата</th><th>№</th><th>Статус</th><th>Клиент</th><th>Телефон</th><th>Связь</th><th>Сумма</th><th>К оплате</th><th>Бонусы</th><th>Списано/начисл.</th><th>XP</th><th>Адрес</th><th>Состав</th></tr></thead><tbody>{''.join(order_rows)}</tbody></table>
+<div class="filters">
+<input id="orderSearch" type="search" placeholder="Поиск по ФИО, телефону, номеру заказа">
+<select id="statusFilter">
+<option value="">Все статусы</option>
+<option value="new">Новые</option>
+<option value="confirmed">Подтвержденные</option>
+<option value="paid">Оплаченные</option>
+<option value="preparing">Готовятся</option>
+<option value="delivery">В доставке</option>
+<option value="done">Доставленные</option>
+</select>
+<input id="dateFrom" type="date">
+<input id="dateTo" type="date">
+<button type="button" onclick="clearOrderFilters()">Сбросить</button>
+</div>
+<div id="orderCount" class="row-count"></div>
+<div class="table-scroll">
+<table><thead><tr><th>Дата</th><th>№</th><th>Статус</th><th>Клиент</th><th>Телефон</th><th>Связь</th><th>Сумма</th><th>К оплате</th><th>Бонусы</th><th>Списано/начисл.</th><th>XP</th><th>Адрес</th><th>Состав</th></tr></thead><tbody id="orderRows">{''.join(order_rows)}</tbody></table>
+</div>
 </section>
 </main>
+<script>
+function norm(value){{return String(value||'').toLowerCase().trim();}}
+function filterCustomers(){{
+ const q=norm(document.getElementById('customerSearch').value);
+ let visible=0;
+ document.querySelectorAll('#customerRows tr').forEach(row=>{{
+  const show=!q || norm(row.dataset.search).includes(q);
+  row.style.display=show?'':'none';
+  if(show) visible++;
+ }});
+ document.getElementById('customerCount').textContent='Показано покупателей: '+visible;
+}}
+function filterOrders(){{
+ const q=norm(document.getElementById('orderSearch').value);
+ const status=document.getElementById('statusFilter').value;
+ const from=document.getElementById('dateFrom').value;
+ const to=document.getElementById('dateTo').value;
+ let visible=0;
+ document.querySelectorAll('#orderRows tr').forEach(row=>{{
+  const date=row.dataset.date||'';
+  const showSearch=!q || norm(row.dataset.search).includes(q);
+  const showStatus=!status || row.dataset.status===status;
+  const showFrom=!from || date>=from;
+  const showTo=!to || date<=to;
+  const show=showSearch && showStatus && showFrom && showTo;
+  row.style.display=show?'':'none';
+  if(show) visible++;
+ }});
+ document.getElementById('orderCount').textContent='Показано заказов: '+visible;
+}}
+function clearCustomerFilters(){{document.getElementById('customerSearch').value='';filterCustomers();}}
+function clearOrderFilters(){{['orderSearch','statusFilter','dateFrom','dateTo'].forEach(id=>document.getElementById(id).value='');filterOrders();}}
+document.getElementById('customerSearch').addEventListener('input',filterCustomers);
+['orderSearch','statusFilter','dateFrom','dateTo'].forEach(id=>document.getElementById(id).addEventListener('input',filterOrders));
+filterCustomers();
+filterOrders();
+</script>
 </body>
 </html>"""
     return web.Response(text=html, content_type="text/html")
