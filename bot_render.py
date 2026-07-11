@@ -63,6 +63,7 @@ DEFAULT_DATA_DIR = "/var/data" if Path("/var/data").exists() else "."
 DATA_DIR = Path(os.getenv("EATFIT_DATA_DIR") or os.getenv("RENDER_DATA_DIR") or DEFAULT_DATA_DIR)
 ORDERS_FILE = DATA_DIR / "orders.json"
 USERS_FILE = DATA_DIR / "users.json"
+ADMIN_TOKENS_FILE = DATA_DIR / "admin_tokens.json"
 WELCOME_BONUS = 30000
 WELCOME_BONUS_DAYS = 7
 ORDER_BONUS_DAYS = 30
@@ -82,6 +83,7 @@ LEVELS = [
 ]
 
 users = {}
+admin_tokens = {}
 
 
 def write_json_file(path, data):
@@ -245,6 +247,47 @@ def load_users():
     if USERS_FILE.exists():
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             users = json.load(f)
+
+
+def save_admin_tokens():
+    write_json_file(ADMIN_TOKENS_FILE, admin_tokens)
+
+
+def load_admin_tokens():
+    global admin_tokens
+
+    if ADMIN_TOKENS_FILE.exists():
+        with open(ADMIN_TOKENS_FILE, "r", encoding="utf-8") as f:
+            admin_tokens = json.load(f)
+
+
+def active_admin_tokens():
+    now = datetime.utcnow()
+    active = {}
+    for token, item in list(admin_tokens.items()):
+        try:
+            expires_at = datetime.fromisoformat(item.get("expires_at", ""))
+        except Exception:
+            expires_at = now - timedelta(seconds=1)
+        if expires_at >= now:
+            active[token] = item
+    if active != admin_tokens:
+        admin_tokens.clear()
+        admin_tokens.update(active)
+        save_admin_tokens()
+    return active
+
+
+def issue_admin_token(chat_id):
+    token = secrets.token_urlsafe(32)
+    active_admin_tokens()
+    admin_tokens[token] = {
+        "chat_id": str(chat_id),
+        "created_at": now_iso(),
+        "expires_at": future_iso(30),
+    }
+    save_admin_tokens()
+    return token
 
 
 def public_user(user):
@@ -489,7 +532,10 @@ def admin_token_from_request(request):
 
 
 def admin_authorized(request):
-    return bool(ADMIN_TOKEN) and secrets.compare_digest(admin_token_from_request(request), ADMIN_TOKEN)
+    token = admin_token_from_request(request)
+    if ADMIN_TOKEN and secrets.compare_digest(token, ADMIN_TOKEN):
+        return True
+    return token in active_admin_tokens()
 
 
 def admin_forbidden_response():
@@ -1028,6 +1074,20 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Chat ID для заказов:\n{chat.id}\n\n"
         "Добавьте это значение в Render как ORDER_CHAT_ID."
+    )
+
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.id != ORDER_CHAT_ID:
+        await update.message.reply_text("Админ-доступ доступен только в рабочем чате заказов EatFit.")
+        return
+
+    token = issue_admin_token(chat.id)
+    await update.message.reply_text(
+        "🔐 Кабинет владельца EatFit\n\n"
+        "Ссылка действует 30 дней. Не отправляйте ее клиентам.\n\n"
+        f"{PUBLIC_BASE_URL}/admin?token={quote(token)}"
     )
 
 
@@ -1902,6 +1962,7 @@ def create_bot_application():
     app.add_handler(CommandHandler("orders", orders_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("chatid", chatid_command))
+    app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(MessageHandler(filters.CONTACT, contact_handler))
     app.add_handler(MessageHandler(filters.Regex(r"^(🍽 Меню|🛍 Корзина|📦 Мои заказы|📊 Рассчитать КБЖУ|💬 Связаться с менеджером)$"), main_menu_buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
@@ -1962,6 +2023,7 @@ def start_web_server():
 def main():
     load_orders()
     load_users()
+    load_admin_tokens()
 
     app = create_bot_application()
 
