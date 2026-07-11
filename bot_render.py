@@ -1,9 +1,11 @@
 # KBJU REWORK VERSION
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, KeyboardButton, ReplyKeyboardMarkup
 from datetime import datetime, timedelta
+from html import escape
 import json
 import os
 from pathlib import Path
+import secrets
 from urllib.parse import quote
 from aiohttp import web
 import threading
@@ -52,7 +54,8 @@ orders = {}
 
 ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
-APP_VERSION = "loyalty-delivered-persist-v1"
+APP_VERSION = "owner-admin-v1"
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 
 telegram_app = None
 
@@ -478,6 +481,120 @@ def public_order(order_number, order):
         "contact_value": order.get("contact_value", ""),
         "comment": order.get("comment", ""),
         "loyalty": order.get("loyalty", {}),
+    }
+
+
+def admin_token_from_request(request):
+    return (request.query.get("token") or request.headers.get("X-Admin-Token") or "").strip()
+
+
+def admin_authorized(request):
+    return bool(ADMIN_TOKEN) and secrets.compare_digest(admin_token_from_request(request), ADMIN_TOKEN)
+
+
+def admin_forbidden_response():
+    if not ADMIN_TOKEN:
+        text = "Admin access is not configured. Set ADMIN_TOKEN in Render environment variables."
+    else:
+        text = "Admin token is missing or invalid."
+    return web.Response(text=text, status=403, content_type="text/plain")
+
+
+def admin_order(order_number, order):
+    item = public_order(order_number, order)
+    item.update({
+        "loyalty_phone": order.get("loyalty_phone", ""),
+        "loyalty_applied": bool(order.get("loyalty_applied", False)),
+        "source": order.get("source", ""),
+        "manager_message_id": order.get("manager_message_id"),
+        "payment_text": order.get("payment_text", ""),
+    })
+    return item
+
+
+def build_admin_database():
+    status_map = order_status_map()
+    admin_orders = [
+        admin_order(order_number, order)
+        for order_number, order in orders.items()
+    ]
+    admin_orders.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+
+    customers = {}
+    for phone, user in users.items():
+        normalized = normalize_phone(phone or user.get("phone", ""))
+        if not normalized:
+            normalized = phone or user.get("phone", "")
+        customers.setdefault(normalized, {
+            "phone": normalized,
+            "name": "",
+            "surname": "",
+            "registered": False,
+            "profile": None,
+            "orders": [],
+            "orders_count": 0,
+            "paid_orders_count": 0,
+            "total_orders_value": 0,
+            "total_paid_value": 0,
+            "last_order_at": "",
+            "statuses": {},
+        })
+        customers[normalized]["registered"] = True
+        customers[normalized]["profile"] = public_user(user)
+        customers[normalized]["name"] = user.get("name", "")
+        customers[normalized]["surname"] = user.get("surname", "")
+
+    for item in admin_orders:
+        phone = normalize_phone(item.get("phone", "")) or normalize_phone(item.get("loyalty_phone", "")) or item.get("phone", "")
+        if not phone:
+            phone = f"no-phone:{item.get('customer_name', 'unknown')}"
+        customer = customers.setdefault(phone, {
+            "phone": phone,
+            "name": "",
+            "surname": "",
+            "registered": False,
+            "profile": None,
+            "orders": [],
+            "orders_count": 0,
+            "paid_orders_count": 0,
+            "total_orders_value": 0,
+            "total_paid_value": 0,
+            "last_order_at": "",
+            "statuses": {},
+        })
+        if item.get("customer_name") and not (customer.get("name") or customer.get("surname")):
+            parts = item.get("customer_name", "").split()
+            customer["name"] = parts[0] if parts else ""
+            customer["surname"] = " ".join(parts[1:]) if len(parts) > 1 else ""
+        customer["orders"].append(item)
+        customer["orders_count"] += 1
+        customer["total_orders_value"] += int(item.get("total_value") or item.get("total") or 0)
+        if item.get("status") in ("paid", "done"):
+            customer["paid_orders_count"] += 1
+            customer["total_paid_value"] += int(item.get("total") or 0)
+        status = item.get("status", "new")
+        customer["statuses"][status] = customer["statuses"].get(status, 0) + 1
+        if item.get("created_at") and item.get("created_at") > customer.get("last_order_at", ""):
+            customer["last_order_at"] = item.get("created_at")
+
+    customer_list = list(customers.values())
+    customer_list.sort(key=lambda item: item.get("last_order_at") or "", reverse=True)
+
+    return {
+        "success": True,
+        "version": APP_VERSION,
+        "generated_at": now_iso(),
+        "summary": {
+            "customers": len(customer_list),
+            "registered_customers": sum(1 for item in customer_list if item.get("registered")),
+            "orders": len(admin_orders),
+            "paid_or_done_orders": sum(1 for item in admin_orders if item.get("status") in ("paid", "done")),
+            "total_orders_value": sum(int(item.get("total_value") or item.get("total") or 0) for item in admin_orders),
+            "total_paid_value": sum(int(item.get("total") or 0) for item in admin_orders if item.get("status") in ("paid", "done")),
+        },
+        "status_labels": status_map,
+        "customers": customer_list,
+        "orders": admin_orders,
     }
 
 
@@ -1640,6 +1757,114 @@ async def version(request):
     })
 
 
+async def admin_data(request):
+    if request.method == "OPTIONS":
+        return cors_options()
+    if not admin_authorized(request):
+        return admin_forbidden_response()
+    return cors_response(build_admin_database())
+
+
+async def admin_dashboard(request):
+    if not admin_authorized(request):
+        return admin_forbidden_response()
+
+    data = build_admin_database()
+    summary = data["summary"]
+    token = quote(admin_token_from_request(request))
+
+    customer_rows = []
+    for customer in data["customers"]:
+        profile = customer.get("profile") or {}
+        display_name = " ".join(part for part in [customer.get("name"), customer.get("surname")] if part) or "—"
+        status_text = ", ".join(
+            f"{data['status_labels'].get(status, status)}: {count}"
+            for status, count in customer.get("statuses", {}).items()
+        ) or "—"
+        customer_rows.append(
+            "<tr>"
+            f"<td>{escape(display_name)}</td>"
+            f"<td>{escape(customer.get('phone', ''))}</td>"
+            f"<td>{'Да' if customer.get('registered') else 'Нет'}</td>"
+            f"<td>{escape(profile.get('level', '—'))}</td>"
+            f"<td>{int(profile.get('xp', 0)):,}</td>"
+            f"<td>{int(profile.get('bonus_balance', 0)):,} VND</td>"
+            f"<td>{customer.get('orders_count', 0)}</td>"
+            f"<td>{customer.get('paid_orders_count', 0)}</td>"
+            f"<td>{int(customer.get('total_orders_value', 0)):,} VND</td>"
+            f"<td>{escape(status_text)}</td>"
+            f"<td>{escape(customer.get('last_order_at', ''))}</td>"
+            "</tr>"
+        )
+
+    order_rows = []
+    for order in data["orders"]:
+        loyalty = order.get("loyalty") or {}
+        order_rows.append(
+            "<tr>"
+            f"<td>{escape(order.get('created_at', ''))}</td>"
+            f"<td>{escape(order.get('order_id', ''))}</td>"
+            f"<td>{escape(order.get('status_label', order.get('status', '')))}</td>"
+            f"<td>{escape(order.get('customer_name', ''))}</td>"
+            f"<td>{escape(order.get('phone', ''))}</td>"
+            f"<td>{escape(order.get('contact_method', ''))}: {escape(order.get('contact_value', ''))}</td>"
+            f"<td>{int(order.get('total_value') or 0):,} VND</td>"
+            f"<td>{int(order.get('total') or 0):,} VND</td>"
+            f"<td>{'Да' if loyalty.get('registered') else 'Нет'}</td>"
+            f"<td>{int(loyalty.get('bonus_applied', 0)):,} / {int(loyalty.get('bonus_earned', 0)):,} VND</td>"
+            f"<td>{int(loyalty.get('xp_earned', 0)):,}</td>"
+            f"<td>{escape(order.get('address', ''))}</td>"
+            f"<td><pre>{escape(order.get('items', '').strip())}</pre></td>"
+            "</tr>"
+        )
+
+    html = f"""<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EatFit Admin</title>
+<style>
+body{{font-family:Arial,sans-serif;margin:0;background:#f6f8f3;color:#172015}}
+header{{position:sticky;top:0;z-index:2;padding:18px 24px;background:#102015;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.16)}}
+h1{{margin:0 0 6px;font-size:26px}} a{{color:#317d20;font-weight:700}} header a{{color:#dff7d3}}
+main{{padding:22px;max-width:1500px;margin:auto}} .stats{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:18px}}
+.stat{{padding:14px;background:#fff;border:1px solid #dfe8da;border-radius:14px}} .stat b{{display:block;font-size:22px;color:#172015}} .stat span{{color:#667461;font-size:12px}}
+section{{margin:18px 0;padding:18px;background:#fff;border:1px solid #dfe8da;border-radius:18px;overflow:auto}}
+h2{{margin:0 0 12px}} table{{width:100%;border-collapse:collapse;font-size:13px}} th,td{{padding:9px;border-bottom:1px solid #edf2e9;text-align:left;vertical-align:top}} th{{position:sticky;top:74px;background:#f6fbf1;z-index:1}} pre{{margin:0;white-space:pre-wrap;font-family:inherit}}
+.tools{{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}} .muted{{color:#91a08c;font-size:13px}}
+@media(max-width:900px){{.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}} main{{padding:12px}}}}
+</style>
+</head>
+<body>
+<header>
+<h1>EatFit Admin</h1>
+<div class="muted">Версия: {escape(APP_VERSION)} · Обновлено: {escape(data['generated_at'])}</div>
+<div class="tools"><a href="/admin/data?token={token}">JSON выгрузка</a><a href="/version">Версия сервера</a></div>
+</header>
+<main>
+<div class="stats">
+<div class="stat"><b>{summary['customers']}</b><span>покупателей всего</span></div>
+<div class="stat"><b>{summary['registered_customers']}</b><span>в бонусной программе</span></div>
+<div class="stat"><b>{summary['orders']}</b><span>заказов всего</span></div>
+<div class="stat"><b>{summary['paid_or_done_orders']}</b><span>оплачено/доставлено</span></div>
+<div class="stat"><b>{summary['total_orders_value']:,}</b><span>VND сумма заказов</span></div>
+<div class="stat"><b>{summary['total_paid_value']:,}</b><span>VND оплачено</span></div>
+</div>
+<section>
+<h2>Покупатели</h2>
+<table><thead><tr><th>Имя</th><th>Телефон</th><th>Бонусы</th><th>Уровень</th><th>XP</th><th>Баланс</th><th>Заказов</th><th>Оплачено</th><th>Сумма</th><th>Статусы</th><th>Последний заказ</th></tr></thead><tbody>{''.join(customer_rows)}</tbody></table>
+</section>
+<section>
+<h2>Все заказы</h2>
+<table><thead><tr><th>Дата</th><th>№</th><th>Статус</th><th>Клиент</th><th>Телефон</th><th>Связь</th><th>Сумма</th><th>К оплате</th><th>Бонусы</th><th>Списано/начисл.</th><th>XP</th><th>Адрес</th><th>Состав</th></tr></thead><tbody>{''.join(order_rows)}</tbody></table>
+</section>
+</main>
+</body>
+</html>"""
+    return web.Response(text=html, content_type="text/html")
+
+
 async def telegram_webhook(request):
     try:
         data = await request.json()
@@ -1659,6 +1884,8 @@ def create_web_app():
     app_web.router.add_route("*", "/loyalty-orders", loyalty_orders)
     app_web.router.add_route("*", "/order-status", order_status_web)
     app_web.router.add_route("*", "/telegram-webhook", telegram_webhook)
+    app_web.router.add_route("*", "/admin/data", admin_data)
+    app_web.router.add_get("/admin", admin_dashboard)
     app_web.router.add_get("/version", version)
     app_web.router.add_get("/test", test)
     return app_web
