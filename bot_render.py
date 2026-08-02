@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import secrets
 from urllib.parse import quote
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 import threading
 import asyncio
 
@@ -57,6 +57,12 @@ ORDER_CHAT_ID = int(os.getenv("ORDER_CHAT_ID", "-5442251534"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://eatfit-bot.onrender.com").rstrip("/")
 APP_VERSION = "owner-admin-v1"
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
+SUPABASE_URL = os.getenv(
+    "SUPABASE_URL", "https://mlezdundixgtjopaxfsg.supabase.co"
+).rstrip("/")
+SUPABASE_PUBLISHABLE_KEY = os.getenv(
+    "SUPABASE_PUBLISHABLE_KEY", "sb_publishable_1bWW-LmfPLyvEwOxVdhKHg_7HYyCG9p"
+).strip()
 
 telegram_app = None
 
@@ -168,6 +174,43 @@ def get_user_by_phone(phone):
     users[normalized] = merged
     save_users()
     return normalized, users[normalized]
+
+
+def get_user_by_auth(auth_user):
+    auth_user_id = str((auth_user or {}).get("id") or "").strip()
+    email = str((auth_user or {}).get("email") or "").strip().lower()
+    if not auth_user_id:
+        return "", None
+    for phone, user in users.items():
+        if str(user.get("auth_user_id") or "") == auth_user_id:
+            return phone, user
+        if email and str(user.get("email") or "").strip().lower() == email:
+            return phone, user
+    return "", None
+
+
+async def authenticated_user(request):
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    if not token or not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
+        return None
+    try:
+        timeout = ClientTimeout(total=10)
+        headers = {
+            "apikey": SUPABASE_PUBLISHABLE_KEY,
+            "Authorization": f"Bearer {token}",
+        }
+        async with ClientSession(timeout=timeout) as session:
+            async with session.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers) as response:
+                if response.status != 200:
+                    return None
+                auth_user = await response.json()
+        return auth_user if auth_user.get("id") and auth_user.get("email") else None
+    except Exception as exc:
+        print("SUPABASE AUTH ERROR:", exc)
+        return None
 
 
 def now_iso():
@@ -298,6 +341,7 @@ def public_user(user):
     return {
         "name": user.get("name", ""),
         "surname": user.get("surname", ""),
+        "email": user.get("email", ""),
         "phone": user.get("phone", ""),
         "contact_method": user.get("contact_method", ""),
         "contact_value": user.get("contact_value", ""),
@@ -1603,19 +1647,14 @@ async def site_order(request):
         )
         order_number = data.get("order_id") or datetime.now().strftime("SITE-%Y%m%d-%H%M%S")
 
-        requested_loyalty_phone = str(data.get("loyalty_phone") or "").strip()
         loyalty_phone = ""
         loyalty_user = None
-        if requested_loyalty_phone:
-            normalized_loyalty_phone = normalize_phone(requested_loyalty_phone)
-            if not normalized_loyalty_phone:
-                return cors_response({"success": False, "error": "invalid_loyalty_phone"}, status=400)
-            loyalty_phone, loyalty_user = get_user_by_phone(normalized_loyalty_phone)
-        else:
-            loyalty_phone, loyalty_user = get_user_by_phone(customer_phone)
-        if not loyalty_user:
-            loyalty_phone = ""
+        auth_user = await authenticated_user(request)
+        if auth_user:
+            loyalty_phone, loyalty_user = get_user_by_auth(auth_user)
         use_bonus = bool(data.get("use_bonus"))
+        if use_bonus and not loyalty_user:
+            return cors_response({"success": False, "error": "loyalty_auth_required"}, status=401)
         total_value = int(float(data.get("total") or 0))
         loyalty_result = loyalty_preview(loyalty_user, total_value, use_bonus)
         bonus_applied = loyalty_result["bonus_applied"]
@@ -1705,10 +1744,28 @@ async def loyalty_register(request):
         return cors_options()
 
     try:
+        auth_user = await authenticated_user(request)
+        if not auth_user:
+            return cors_response({"success": False, "error": "auth_required"}, status=401)
         data = await request.json()
         phone, user = get_user_by_phone(data.get("phone"))
         if not phone:
             return cors_response({"success": False, "error": "invalid_phone"}, status=400)
+
+        auth_phone, auth_profile = get_user_by_auth(auth_user)
+        if auth_profile and auth_phone != phone:
+            return cors_response({"success": False, "error": "account_already_linked"}, status=409)
+        if user and user.get("auth_user_id") and user.get("auth_user_id") != auth_user.get("id"):
+            return cors_response({"success": False, "error": "phone_already_registered"}, status=409)
+        if user and not user.get("auth_user_id"):
+            submitted_name = str(data.get("name") or "").strip().casefold()
+            submitted_surname = str(data.get("surname") or "").strip().casefold()
+            stored_name = str(user.get("name") or "").strip().casefold()
+            stored_surname = str(user.get("surname") or "").strip().casefold()
+            if (stored_name and submitted_name != stored_name) or (
+                stored_surname and submitted_surname != stored_surname
+            ):
+                return cors_response({"success": False, "error": "profile_mismatch"}, status=409)
 
         is_new = user is None
         user = user or {}
@@ -1717,6 +1774,8 @@ async def loyalty_register(request):
             **user,
             "name": data.get("name", user.get("name", "")),
             "surname": data.get("surname", user.get("surname", "")),
+            "email": str(auth_user.get("email") or "").strip().lower(),
+            "auth_user_id": auth_user.get("id"),
             "phone": phone,
             "contact_method": data.get("contact_method", user.get("contact_method", "")),
             "contact_value": data.get("contact_value", user.get("contact_value", "")),
@@ -1752,20 +1811,15 @@ async def loyalty_status(request):
     if request.method == "OPTIONS":
         return cors_options()
 
-    phone = normalize_phone(request.query.get("phone", ""))
-    if not phone and request.method == "POST":
-        try:
-            data = await request.json()
-            phone = normalize_phone(data.get("phone"))
-        except Exception:
-            phone = ""
-
-    phone, user = get_user_by_phone(phone)
-    if not phone:
-        return cors_response({"success": False, "error": "invalid_phone"}, status=400)
+    auth_user = await authenticated_user(request)
+    if not auth_user:
+        return cors_response({"success": False, "error": "auth_required"}, status=401)
+    _, user = get_user_by_auth(auth_user)
     return cors_response({
         "success": True,
         "registered": bool(user),
+        "profile_required": not bool(user),
+        "email": auth_user.get("email", ""),
         "user": public_user(user) if user else None,
         "welcome_bonus": WELCOME_BONUS,
         "bonus_rate": level_bonus_rate(club_level(int(user.get("xp", 0)))) if user else level_bonus_rate(LEVELS[-1]),
@@ -1776,16 +1830,12 @@ async def loyalty_orders(request):
     if request.method == "OPTIONS":
         return cors_options()
 
-    phone = normalize_phone(request.query.get("phone", ""))
-    if not phone and request.method == "POST":
-        try:
-            data = await request.json()
-            phone = normalize_phone(data.get("phone"))
-        except Exception:
-            phone = ""
-
-    if not phone:
-        return cors_response({"success": False, "error": "invalid_phone"}, status=400)
+    auth_user = await authenticated_user(request)
+    if not auth_user:
+        return cors_response({"success": False, "error": "auth_required"}, status=401)
+    phone, user = get_user_by_auth(auth_user)
+    if not phone or not user:
+        return cors_response({"success": True, "orders": []})
 
     matched_orders = []
     for order_number, order in orders.items():
